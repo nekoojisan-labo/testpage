@@ -913,26 +913,48 @@
 
   // --- normalized keypoints (x,y in 0..1; origin top-left of fig box) ---
   // Figure drawn centered; box is taller than wide.
-  const K = {
-    // "searching for a toilet while holding it": LEFT hand raised over the brow (かざす / scanning),
-    // RIGHT hand clamps the lower belly, legs crossed + on tip-toe. Hand sweeps & body ambles in renderFrame.
-    head:      [0.50, 0.21],   // peering forward, searching
+  // Two pose keyframes — the figure MORPHS HOLD -> DASH with scroll (lerped per frame in renderFrame).
+  const POSE_HOLD = {
+    // top of page: WANDERING & searching — LEFT hand raised over the brow (かざす / scanning),
+    // RIGHT hand clamps the belly, legs crossed + on tip-toe.
+    head:      [0.50, 0.21],
     neck:      [0.505,0.285],
-    shoulderL: [0.43, 0.31],   // raised-arm shoulder (lifted a touch)
+    shoulderL: [0.43, 0.31],
     shoulderR: [0.575,0.325],
-    spineMid:  [0.515,0.42],   // slight forward peer
+    spineMid:  [0.515,0.42],
     pelvis:    [0.50, 0.56],
-    belly:     [0.535,0.51],   // clutch point (RIGHT hand)
-    elbowL:    [0.31, 0.25],   // raised arm: shoulderL -> elbowL (up/out) -> handL (over the brow)
-    handL:     [0.40, 0.14],   // the "kazasu" scanning hand (swept each frame)
-    elbowR:    [0.645,0.43],   // clutch arm: shoulderR -> elbowR (down/in) -> handR (belly)
+    belly:     [0.535,0.51],
+    elbowL:    [0.31, 0.25],
+    handL:     [0.40, 0.14],   // the "kazasu" scanning hand
+    elbowR:    [0.645,0.43],
     handR:     [0.515,0.51],
     hipL:      [0.455,0.575],
     hipR:      [0.545,0.57],
-    kneeL:     [0.515,0.71],   // legs crossed into an X (holding)
+    kneeL:     [0.515,0.71],
     kneeR:     [0.485,0.715],
-    footL:     [0.55, 0.90],   // crossed + planted
-    footR:     [0.46, 0.875]   // crossed + heel lifted (tip-toe)
+    footL:     [0.55, 0.90],
+    footR:     [0.46, 0.875]
+  };
+  const POSE_DASH = {
+    // scrolled down: DASHING to the toilet — pitched forward, legs in a stride, left arm pumping,
+    // RIGHT hand STILL clamping the belly (running while holding it). Legs/arm cycle in renderFrame.
+    head:      [0.55, 0.27],
+    neck:      [0.535,0.33],
+    shoulderL: [0.45, 0.36],
+    shoulderR: [0.60, 0.35],
+    spineMid:  [0.55, 0.44],
+    pelvis:    [0.50, 0.57],
+    belly:     [0.555,0.52],
+    elbowL:    [0.42, 0.40],
+    handL:     [0.50, 0.33],   // arm comes down to pump
+    elbowR:    [0.61, 0.47],
+    handR:     [0.53, 0.52],   // still clutching the belly
+    hipL:      [0.47, 0.575],
+    hipR:      [0.53, 0.575],
+    kneeL:     [0.57, 0.71],
+    kneeR:     [0.44, 0.76],
+    footL:     [0.62, 0.85],
+    footR:     [0.40, 0.93]
   };
   // bone list: [a, b, thickness(normalized capsule radius)]
   const BONES = [
@@ -1011,25 +1033,34 @@
       leanY = Math.max(-10, Math.min(14, (mouseEase.y - fig.cy)*0.025));
     }
 
-    // --- autonomous "wandering & searching for a toilet" motion (all gated by reduced-motion) ---
-    const SCAN   = REDUCED ? 0 : Math.sin(t*0.00075);          // raised hand sweeps the horizon
-    const WANDER = REDUCED ? 0 : Math.sin(t*0.00026);          // whole body ambles left/right
-    const STEP   = REDUCED ? 0 : Math.abs(Math.sin(t*0.0016)); // gentle shuffle bob
+    // --- scroll-driven pose morph: HOLD (searching) at top -> DASH (running to the toilet) on scroll ---
+    const poseP = REDUCED ? 0 : Math.min(1, (window.scrollY||0) / ((window.innerHeight||800)*1.6));
+    const HOLDW = 1 - poseP, DASHW = poseP;
+    const SCAN   = REDUCED ? 0 : Math.sin(t*0.00075);          // search: raised hand sweeps the horizon
+    const RUN    = REDUCED ? 0 : Math.sin(t*0.006);            // dash: leg/arm running cycle
+    const WANDER = REDUCED ? 0 : Math.sin(t*0.00026);          // amble left/right
+    const STEP   = REDUCED ? 0 : Math.abs(Math.sin(t*0.0016)); // shuffle bob
 
     // --- flowing "thread" strokes ALONG each bone: defines limbs & makes the pose legible ---
     const KS = {};
-    for(const nm in K){
-      let kx = K[nm][0], ky = K[nm][1];
+    for(const nm in POSE_HOLD){
+      const a = POSE_HOLD[nm], b = POSE_DASH[nm];
+      let kx = a[0]*HOLDW + b[0]*DASHW;                        // lerp HOLD -> DASH by scroll
+      let ky = a[1]*HOLDW + b[1]*DASHW;
       if(!REDUCED){
-        // the raised "kazasu" hand (+ its elbow & the head) sweep as the figure scans for a toilet
-        if(nm === 'handL'){ kx += SCAN*0.13; ky += -0.015 + Math.abs(SCAN)*0.02; }
-        else if(nm === 'elbowL'){ kx += SCAN*0.07; }
-        else if(nm === 'head'){ kx += SCAN*0.045; }
+        // searching (top): kazasu hand/head sweep; dashing (scrolled): arm pump + alternating leg stride
+        if(nm === 'handL'){ kx += SCAN*0.13*HOLDW + RUN*0.05*DASHW; ky += (-0.015+Math.abs(SCAN)*0.02)*HOLDW - RUN*0.05*DASHW; }
+        else if(nm === 'elbowL'){ kx += SCAN*0.07*HOLDW + RUN*0.03*DASHW; }
+        else if(nm === 'head'){ kx += SCAN*0.045*HOLDW; }
+        else if(nm === 'kneeL'){ kx += RUN*0.045*DASHW; ky -= Math.max(0, RUN)*0.04*DASHW; }
+        else if(nm === 'footL'){ kx += RUN*0.06*DASHW;  ky -= Math.max(0, RUN)*0.05*DASHW; }
+        else if(nm === 'kneeR'){ kx -= RUN*0.045*DASHW; ky -= Math.max(0,-RUN)*0.04*DASHW; }
+        else if(nm === 'footR'){ kx -= RUN*0.06*DASHW;  ky -= Math.max(0,-RUN)*0.05*DASHW; }
       }
       let kxp = fig.cx + (kx-0.5)*fig.scale*0.98;
       let kyp = fig.cy + (ky-0.5)*fig.scale;
       if(!REDUCED){
-        kxp += WANDER*fig.scale*0.07;                         // amble left/right (wandering)
+        kxp += WANDER*fig.scale*0.07*HOLDW;                   // amble (mostly while searching)
         kyp += STEP*3.5;                                      // shuffle bob
         kxp += Math.sin(t*0.0012 + kx*9.0)*1.2;               // fine breathing jitter
         const up = Math.max(0, 0.62 - ky);
@@ -1044,6 +1075,8 @@
       const blen = Math.hypot(bdx,bdy)||1;
       const pnx = -bdy/blen, pny = bdx/blen;            // perpendicular unit
       const thPx = BONES[b][2]*fig.scale;               // limb half-width in px
+      // TONAL CONTRAST (濃淡): thick masses (torso) draw darker, thin limbs lighter — like the original
+      const tone = 0.55 + Math.max(0, Math.min(1, (BONES[b][2]-0.03)/0.07))*0.95;
       // dense field of FINE tangled threads filling the limb volume (mantis "scribbled wireframe" texture)
       const threads = Math.max(10, Math.round((blen*0.3 + thPx*2.2) * (W<760?0.55:1)));
       const SEG = 8, cap = thPx*1.1;                    // clamp keeps threads in the silhouette (no marimo)
@@ -1056,7 +1089,9 @@
         const drift = (srand(sd*2.9)*2-1)*thPx*0.55;    // wanders across
         const freq = 3 + srand(sd*3.1)*5;
         const phase = srand(sd*5.3)*Math.PI*2;
-        ctx.strokeStyle = 'rgba(11,11,11,'+(0.045 + srand(sd*2.3)*0.075).toFixed(3)+')';
+        // core threads darker, edge threads lighter -> depth/shading within each mass (濃淡)
+        const al = (0.05 + srand(sd*2.3)*0.085) * tone * (1.18 - Math.abs(o0)/thPx*0.45);
+        ctx.strokeStyle = 'rgba(11,11,11,'+al.toFixed(3)+')';
         ctx.beginPath();
         for(let k=0;k<=SEG;k++){
           const f = k/SEG;
@@ -1150,7 +1185,7 @@
     const ramp = ()=>{
       const vh = window.innerHeight || 800;
       const k = Math.min(1, (window.scrollY || 0) / (vh*0.8));  // 0 at top -> 1 by ~0.8 screen
-      canvas.style.opacity = (1 - k*0.70).toFixed(3);           // 1.0 in hero -> ~0.30 over content (still readable)
+      canvas.style.opacity = (1 - k*0.48).toFixed(3);           // 1.0 in hero -> ~0.52 over content (keeps presence; 濃淡 carries it)
       scT = null;
     };
     window.addEventListener('scroll', ()=>{ if(scT===null) scT = requestAnimationFrame(ramp); }, {passive:true});
