@@ -904,9 +904,9 @@
      2. SCRIBBLE-LINE HUMANOID (Canvas 2D) — トイレ我慢 pose
      ---------------------------------------------------------
      SKELETON (INVARIANT — tune here): normalized 2D keypoints
-     in 0..1 space, scaled to canvas. Pose = hunched forward,
-     knees together + slightly crossed, on tip-toe, BOTH hands
-     clutching the lower belly. Comment-driven so it's tweakable.
+     in 0..1 space, scaled to canvas. Pose = WANDERING & searching
+     for a toilet: one hand raised over the brow (scanning), the other
+     clutching the belly, legs crossed + on tip-toe. Animated in renderFrame.
      ========================================================= */
   const canvas = document.getElementById('figCanvas');
   const ctx = canvas.getContext('2d');
@@ -914,24 +914,25 @@
   // --- normalized keypoints (x,y in 0..1; origin top-left of fig box) ---
   // Figure drawn centered; box is taller than wide.
   const K = {
-    // ASYMMETRIC "desperate squirm" hold pose — twist + hunch + crossed legs.
-    head:      [0.475,0.195],  // dropped forward + tilted, close to the shoulders (hunch)
-    neck:      [0.505,0.255],
-    shoulderL: [0.40, 0.285],  // left shoulder dropped
-    shoulderR: [0.595,0.265],  // right shoulder raised -> torso twist
-    spineMid:  [0.535,0.375],  // spine bows into a hunched curl
-    pelvis:    [0.49, 0.555],
-    belly:     [0.50, 0.505],  // low clutch point (both hands clamp the lower belly)
-    elbowL:    [0.37, 0.43],   // elbows wing OUT, arms wrap inward
-    handL:     [0.485,0.515],  // hands clamped together, LOW
-    elbowR:    [0.645,0.42],
-    handR:     [0.515,0.515],
-    hipL:      [0.45, 0.57],
-    hipR:      [0.545,0.565],
-    kneeL:     [0.525,0.71],   // LEGS CROSS into an X (knees pressed together)
-    kneeR:     [0.475,0.715],
-    footL:     [0.565,0.915],  // left leg crosses to the right, planted
-    footR:     [0.45, 0.875]   // right leg crosses left, heel lifted (tip-toe)
+    // "searching for a toilet while holding it": LEFT hand raised over the brow (かざす / scanning),
+    // RIGHT hand clamps the lower belly, legs crossed + on tip-toe. Hand sweeps & body ambles in renderFrame.
+    head:      [0.50, 0.21],   // peering forward, searching
+    neck:      [0.505,0.285],
+    shoulderL: [0.43, 0.31],   // raised-arm shoulder (lifted a touch)
+    shoulderR: [0.575,0.325],
+    spineMid:  [0.515,0.42],   // slight forward peer
+    pelvis:    [0.50, 0.56],
+    belly:     [0.535,0.51],   // clutch point (RIGHT hand)
+    elbowL:    [0.31, 0.25],   // raised arm: shoulderL -> elbowL (up/out) -> handL (over the brow)
+    handL:     [0.40, 0.14],   // the "kazasu" scanning hand (swept each frame)
+    elbowR:    [0.645,0.43],   // clutch arm: shoulderR -> elbowR (down/in) -> handR (belly)
+    handR:     [0.515,0.51],
+    hipL:      [0.455,0.575],
+    hipR:      [0.545,0.57],
+    kneeL:     [0.515,0.71],   // legs crossed into an X (holding)
+    kneeR:     [0.485,0.715],
+    footL:     [0.55, 0.90],   // crossed + planted
+    footR:     [0.46, 0.875]   // crossed + heel lifted (tip-toe)
   };
   // bone list: [a, b, thickness(normalized capsule radius)]
   const BONES = [
@@ -945,8 +946,7 @@
     ['elbowL','handL', 0.034],       // forearms
     ['shoulderR','elbowR', 0.04],
     ['elbowR','handR', 0.034],
-    ['handL','belly', 0.032],        // hands clamp the belly (kept slim so the clutch stays soft)
-    ['handR','belly', 0.032],
+    ['handR','belly', 0.032],        // RIGHT hand clamps the belly (left hand is raised / scanning)
     ['belly','pelvis', 0.055],       // lower-abdomen mass — anchors the clutch
     ['pelvis','hipL', 0.05],
     ['pelvis','hipR', 0.05],
@@ -1011,14 +1011,27 @@
       leanY = Math.max(-10, Math.min(14, (mouseEase.y - fig.cy)*0.025));
     }
 
+    // --- autonomous "wandering & searching for a toilet" motion (all gated by reduced-motion) ---
+    const SCAN   = REDUCED ? 0 : Math.sin(t*0.00075);          // raised hand sweeps the horizon
+    const WANDER = REDUCED ? 0 : Math.sin(t*0.00026);          // whole body ambles left/right
+    const STEP   = REDUCED ? 0 : Math.abs(Math.sin(t*0.0016)); // gentle shuffle bob
+
     // --- flowing "thread" strokes ALONG each bone: defines limbs & makes the pose legible ---
     const KS = {};
     for(const nm in K){
-      const kx = K[nm][0], ky = K[nm][1];
+      let kx = K[nm][0], ky = K[nm][1];
+      if(!REDUCED){
+        // the raised "kazasu" hand (+ its elbow & the head) sweep as the figure scans for a toilet
+        if(nm === 'handL'){ kx += SCAN*0.13; ky += -0.015 + Math.abs(SCAN)*0.02; }
+        else if(nm === 'elbowL'){ kx += SCAN*0.07; }
+        else if(nm === 'head'){ kx += SCAN*0.045; }
+      }
       let kxp = fig.cx + (kx-0.5)*fig.scale*0.98;
       let kyp = fig.cy + (ky-0.5)*fig.scale;
       if(!REDUCED){
-        kxp += Math.sin(t*0.0012 + kx*9.0)*1.4;
+        kxp += WANDER*fig.scale*0.07;                         // amble left/right (wandering)
+        kyp += STEP*3.5;                                      // shuffle bob
+        kxp += Math.sin(t*0.0012 + kx*9.0)*1.2;               // fine breathing jitter
         const up = Math.max(0, 0.62 - ky);
         kxp += swayX*(0.4 + up) + leanX*up*1.8;
         kyp += leanY*up*1.6;
