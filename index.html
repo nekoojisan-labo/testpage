@@ -951,10 +951,10 @@
     handR:     [0.53, 0.52],   // still clutching the belly
     hipL:      [0.47, 0.575],
     hipR:      [0.53, 0.575],
-    kneeL:     [0.57, 0.71],
-    kneeR:     [0.44, 0.76],
-    footL:     [0.62, 0.85],
-    footR:     [0.40, 0.93]
+    kneeL:     [0.55, 0.71],
+    kneeR:     [0.46, 0.74],
+    footL:     [0.575,0.86],   // a natural mid-stride (not splayed)
+    footR:     [0.43, 0.90]
   };
   // bone list: [a, b, thickness(normalized capsule radius)]
   const BONES = [
@@ -1037,7 +1037,7 @@
     const poseP = REDUCED ? 0 : Math.min(1, (window.scrollY||0) / ((window.innerHeight||800)*1.6));
     const HOLDW = 1 - poseP, DASHW = poseP;
     const SCAN   = REDUCED ? 0 : Math.sin(t*0.00075);          // search: raised hand sweeps the horizon
-    const RUN    = REDUCED ? 0 : Math.sin(t*0.006);            // dash: leg/arm running cycle
+    const RUN    = REDUCED ? 0 : Math.sin(t*0.006);            // dash: arm-pump + whole-body bob (NOT a leg flap)
     const WANDER = REDUCED ? 0 : Math.sin(t*0.00026);          // amble left/right
     const STEP   = REDUCED ? 0 : Math.abs(Math.sin(t*0.0016)); // shuffle bob
 
@@ -1048,20 +1048,18 @@
       let kx = a[0]*HOLDW + b[0]*DASHW;                        // lerp HOLD -> DASH by scroll
       let ky = a[1]*HOLDW + b[1]*DASHW;
       if(!REDUCED){
-        // searching (top): kazasu hand/head sweep; dashing (scrolled): arm pump + alternating leg stride
+        // searching (top): kazasu hand/head sweep; dashing (scrolled): a gentle arm pump (legs stay put)
         if(nm === 'handL'){ kx += SCAN*0.13*HOLDW + RUN*0.05*DASHW; ky += (-0.015+Math.abs(SCAN)*0.02)*HOLDW - RUN*0.05*DASHW; }
         else if(nm === 'elbowL'){ kx += SCAN*0.07*HOLDW + RUN*0.03*DASHW; }
         else if(nm === 'head'){ kx += SCAN*0.045*HOLDW; }
-        else if(nm === 'kneeL'){ kx += RUN*0.045*DASHW; ky -= Math.max(0, RUN)*0.04*DASHW; }
-        else if(nm === 'footL'){ kx += RUN*0.06*DASHW;  ky -= Math.max(0, RUN)*0.05*DASHW; }
-        else if(nm === 'kneeR'){ kx -= RUN*0.045*DASHW; ky -= Math.max(0,-RUN)*0.04*DASHW; }
-        else if(nm === 'footR'){ kx -= RUN*0.06*DASHW;  ky -= Math.max(0,-RUN)*0.05*DASHW; }
+        // (legs are NOT cycled — that read as a weird foot-flap; the run is a whole-body bob below)
       }
       let kxp = fig.cx + (kx-0.5)*fig.scale*0.98;
       let kyp = fig.cy + (ky-0.5)*fig.scale;
       if(!REDUCED){
         kxp += WANDER*fig.scale*0.07*HOLDW;                   // amble (mostly while searching)
         kyp += STEP*3.5;                                      // shuffle bob
+        kyp += Math.abs(RUN)*3*DASHW;                         // gentle running bob (replaces the foot-flap)
         kxp += Math.sin(t*0.0012 + kx*9.0)*1.2;               // fine breathing jitter
         const up = Math.max(0, 0.62 - ky);
         kxp += swayX*(0.4 + up) + leanX*up*1.8;
