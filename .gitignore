@@ -1,0 +1,5 @@
+# local Claude Code / dev-preview tooling
+.claude/
+# OS / editor junk
+.DS_Store
+Thumbs.db
