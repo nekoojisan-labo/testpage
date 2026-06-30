@@ -195,7 +195,7 @@
   /* persistent figure: a FIXED full-viewport layer behind the content, so the
      character stays on screen (and keeps animating) through the whole scroll */
   #figCanvas{
-    position:fixed; inset:0; width:100vw; height:100vh;
+    position:fixed; inset:0; width:100vw; height:100svh;
     z-index:1; display:block; pointer-events:none;
     opacity:1; transition:opacity .35s ease;   /* JS ramps this down past the hero */
   }
@@ -980,8 +980,16 @@
 
   let figVisible = true;
   let rafId = null;
+  let lastDraw = 0;
+  const FIG_FRAME_MS = 1000/30;   // cap the figure to ~30fps — a slow idle sway needs no more
 
   function renderFrame(now){
+    now = now || 0;
+    if(!REDUCED && figVisible){
+      rafId = requestAnimationFrame(renderFrame);
+      if(now - lastDraw < FIG_FRAME_MS) return;    // throttle: skip this frame's draw
+      lastDraw = now;
+    } else { rafId = null; }                        // REDUCED: fall through for a single static render
     ctx.clearRect(0,0,W,H);
     ctx.lineCap = 'round';
 
@@ -1085,9 +1093,6 @@
         ctx.stroke();
       }
     }
-
-    if(!REDUCED && figVisible){ rafId = requestAnimationFrame(renderFrame); }
-    else { rafId = null; }
   }
 
   function startRAF(){
@@ -1095,6 +1100,12 @@
     if(rafId===null && figVisible){ rafId = requestAnimationFrame(renderFrame); }
   }
   function stopRAF(){ if(rafId!==null){ cancelAnimationFrame(rafId); rafId=null; } }
+
+  // suspend the figure loop while the tab is hidden (saves CPU/battery)
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden){ figVisible=false; stopRAF(); }
+    else if(!REDUCED){ figVisible=true; lastDraw=0; startRAF(); }
+  });
 
   function init(){
     layout();
@@ -1116,6 +1127,7 @@
     window.addEventListener('touchmove', e=>{
       const tt = e.touches[0]; if(tt){ mouse.x = tt.clientX; mouse.y = tt.clientY; mouse.active = true; }
     }, {passive:true});
+    window.addEventListener('touchend', ()=>{ mouse.active = false; }, {passive:true});
   }
 
   // The figure persists across the whole page (no off-screen pause). Fade it down past the
