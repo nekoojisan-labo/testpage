@@ -1179,15 +1179,32 @@
   // The figure persists across the whole page (no off-screen pause). Fade it down past the
   // hero so editorial content stays readable, then it lingers as a quiet animated presence.
   if(!REDUCED){
+    // ONE rAF-coalesced scroll handler: figure opacity ramp + PARALLAX scrub. Mantis-like
+    // "everything moves with scroll" — JS drives transforms straight from scroll progress.
+    const parEls = [];
+    document.querySelectorAll('.big, .pillar__head').forEach(el=>{
+      el.style.willChange = 'transform';
+      parEls.push({ el, speed: el.classList.contains('big') ? 0.085 : -0.045, center: 0 });
+    });
+    function measurePar(){                          // cache untransformed doc-space centres (init/resize only)
+      const sy = window.scrollY || 0;
+      parEls.forEach(p=>{ p.el.style.transform = ''; });
+      parEls.forEach(p=>{ const r = p.el.getBoundingClientRect(); p.center = r.top + sy + r.height/2; });
+    }
     let scT = null;
-    const ramp = ()=>{
-      const vh = window.innerHeight || 800;
-      const k = Math.min(1, (window.scrollY || 0) / (vh*0.8));  // 0 at top -> 1 by ~0.8 screen
-      canvas.style.opacity = (1 - k*0.48).toFixed(3);           // 1.0 in hero -> ~0.52 over content (keeps presence; 濃淡 carries it)
+    const onScroll = ()=>{                          // per frame: writes only (no layout reads) -> no thrash
+      const sy = window.scrollY || 0, vh = window.innerHeight || 800;
+      const k = Math.min(1, sy / (vh*0.8));
+      canvas.style.opacity = (1 - k*0.48).toFixed(3);          // figure fades a touch past the hero
+      const vc = sy + vh/2;                                    // drift each container by its distance from screen centre
+      for(const p of parEls){ p.el.style.transform = 'translateY(' + ((p.center - vc)*p.speed).toFixed(1) + 'px)'; }
       scT = null;
     };
-    window.addEventListener('scroll', ()=>{ if(scT===null) scT = requestAnimationFrame(ramp); }, {passive:true});
-    ramp();
+    window.addEventListener('scroll', ()=>{ if(scT===null) scT = requestAnimationFrame(onScroll); }, {passive:true});
+    let rzP = null;
+    window.addEventListener('resize', ()=>{ clearTimeout(rzP); rzP = setTimeout(()=>{ measurePar(); onScroll(); }, 180); });
+    window.addEventListener('load', ()=>{ measurePar(); onScroll(); });
+    measurePar(); onScroll();
   }
 
   /* =========================================================
