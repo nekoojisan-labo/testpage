@@ -1078,16 +1078,16 @@
       // TONAL CONTRAST (濃淡): thick masses (torso) draw darker, thin limbs lighter — like the original
       const tone = 0.55 + Math.max(0, Math.min(1, (BONES[b][2]-0.03)/0.07))*0.95;
       // dense field of FINE tangled threads filling the limb volume (mantis "scribbled wireframe" texture)
-      const threads = Math.max(10, Math.round((blen*0.3 + thPx*2.2) * (W<760?0.55:1)));
-      const SEG = 8, cap = thPx*1.1;                    // clamp keeps threads in the silhouette (no marimo)
+      const threads = Math.max(8, Math.round((blen*0.24 + thPx*1.8) * (W<760?0.55:1)));
+      const SEG = 12, cap = thPx*1.12;                  // more segments -> smooth, clean flowing lines
       ctx.lineWidth = 0.5;
       for(let s=0;s<threads;s++){
         const sd = b*97.3 + s*13.7;
-        const t0 = srand(sd)*0.66;                      // random start along the bone
-        let t1 = t0 + 0.22 + srand(sd*1.4)*0.55; if(t1>1) t1 = 1;  // stays within the bone (no joint spikes)
-        const o0 = (srand(sd*1.7)*2-1)*thPx*0.85;       // start across the limb
-        const drift = (srand(sd*2.9)*2-1)*thPx*0.55;    // wanders across
-        const freq = 3 + srand(sd*3.1)*5;
+        const t0 = srand(sd)*0.34;                      // longer threads -> clean flowing lines, not scratchy
+        let t1 = t0 + 0.5 + srand(sd*1.4)*0.45; if(t1>1) t1 = 1;
+        const o0 = (srand(sd*1.7)*2-1)*thPx*0.8;        // start across the limb
+        const drift = (srand(sd*2.9)*2-1)*thPx*0.28;    // gentle cross-drift
+        const freq = 0.5 + srand(sd*3.1)*1.1;           // a single gentle arc (was 3-8 = scratchy)
         const phase = srand(sd*5.3)*Math.PI*2;
         // core threads darker, edge threads lighter -> depth/shading within each mass (濃淡)
         const al = (0.05 + srand(sd*2.3)*0.085) * tone * (1.18 - Math.abs(o0)/thPx*0.45);
@@ -1096,7 +1096,7 @@
         for(let k=0;k<=SEG;k++){
           const f = k/SEG;
           const along = t0 + (t1-t0)*f;
-          let o = o0 + drift*f + Math.sin(f*Math.PI*freq + phase)*thPx*0.33; // tangle
+          let o = o0 + drift*f + Math.sin(f*Math.PI*freq + phase)*thPx*0.4; // smooth bow
           o = o<-cap?-cap:(o>cap?cap:o);
           const px = A[0] + bdx*along + pnx*o;
           const py = A[1] + bdy*along + pny*o;
