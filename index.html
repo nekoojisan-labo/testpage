@@ -1382,6 +1382,38 @@
     });
   }
 
+  /* =========================================================
+     12. SMOOTH (inertia) SCROLL — vanilla, Lenis-like (no library).
+     Eases the NATIVE scroll on wheel for a "ぬるっと" feel; keyboard,
+     scrollbar and anchor jumps stay native and are auto-resynced.
+     Skipped under reduced-motion and on touch (coarse) devices.
+     Drives the real window scroll, so the figure opacity-ramp, the
+     reveal/active-nav observers and every fixed element stay in sync.
+     ========================================================= */
+  if(!REDUCED && !matchMedia('(pointer:coarse)').matches){
+    const EASE = 0.1;
+    let cur = window.scrollY, tgt = cur, applied = cur, sraf = null;
+    const maxY = ()=> Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    function tick(){
+      if(Math.abs(window.scrollY - applied) > 2){ cur = tgt = window.scrollY; } // external scroll -> resync
+      cur += (tgt - cur) * EASE;
+      const done = Math.abs(tgt - cur) < 0.4;
+      if(done){ cur = tgt; }
+      applied = cur;
+      window.scrollTo({ top: cur, left: 0, behavior: 'instant' });
+      sraf = done ? null : requestAnimationFrame(tick);
+    }
+    window.addEventListener('wheel', (e)=>{
+      if(e.ctrlKey) return;                              // pinch-zoom: leave it to the browser
+      e.preventDefault();
+      if(sraf === null){ cur = tgt = window.scrollY; }   // fresh gesture: sync to the real position
+      let d = e.deltaY;
+      if(e.deltaMode === 1) d *= 16; else if(e.deltaMode === 2) d *= window.innerHeight;
+      tgt = Math.max(0, Math.min(maxY(), tgt + d));
+      if(sraf === null) sraf = requestAnimationFrame(tick);
+    }, { passive:false });
+  }
+
 })();
 </script>
 </body>
