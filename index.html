@@ -1038,51 +1038,59 @@
     const dens = narrow ? 0.6 : 1;
 
     // A,C: screen-space ends; r0,r1: radius px; helical wires wrap the capsule
-    function coil(A, C, r0, r1, wires, turns, tone, sd0){
+    // one stroke = a RANDOM-WALK pen scribble wandering over the limb surface: variable curl
+    // speed, sudden direction reversals, strong radius wobble, stray flyaway loops. This is
+    // the original's hand-scribbled look — chaotic organic curls, NOT neat mechanical rings.
+    function coil(A, C, r0, r1, wires, curliness, tone, sd0){
       const bdx = C[0]-A[0], bdy = C[1]-A[1];
       const blen = Math.hypot(bdx, bdy) || 1;
       const ux = bdx/blen, uy = bdy/blen;
       const pnx = -uy, pny = ux;
       const n = Math.max(2, Math.round(wires*dens));
+      const tightProb = Math.min(0.65, curliness*0.15);
       for(let w=0; w<n; w++){
         const sd = sd0 + w*13.7;
-        const th0 = S(sd)*Math.PI*2;
-        const dir = S(sd*1.3) > 0.5 ? 1 : -1;
-        const tw  = turns*(0.85 + S(sd*2.1)*0.35);
-        const f0  = S(sd*3.7)*0.15;
-        const f1  = Math.min(1, f0 + 0.7 + S(sd*4.3)*0.35);
-        const STEPS = Math.min(140, Math.max(30, Math.round(tw*12)));
+        let th = S(sd)*Math.PI*2;
+        let dir = S(sd*1.3) > 0.5 ? 1 : -1;
+        const tight = S(sd*6.3) < tightProb;                    // tight curls vs long meanders
+        const dth = tight ? (0.5 + S(sd*7.1)*0.55) : (0.13 + S(sd*8.3)*0.22);
+        let f = S(sd*3.7)*0.3;
+        const fEnd = Math.min(1, f + 0.45 + S(sd*4.3)*0.5);
+        const STEPS = 44 + Math.floor(S(sd*5.1)*28);
+        const df = (fEnd - f)/STEPS;
         const pts = [];
         for(let k=0; k<=STEPS; k++){
-          const f = f0 + (f1-f0)*(k/STEPS);
-          const taper = Math.min(1, 0.55 + Math.min(f, 1-f)*2.0);   // soft ends -> adjacent coils merge
-          let r = (r0 + (r1-r0)*f) * taper;
-          let wob = 0.22;
-          if(fx){ // pointer agitation: wires shake LOCALLY around the cursor, then settle (input-driven)
-            const bx = A[0]+bdx*f, by = A[1]+bdy*f;
+          if(S(sd + k*3.7) > 0.965) dir = -dir;                 // sudden reversals -> chaos
+          th += dir * dth * (0.6 + S(sd + k*1.3)*0.8);
+          f  += df  * (0.4 + S(sd + k*2.1)*1.2);
+          const ff = f < 0 ? 0 : (f > 1 ? 1 : f);
+          const taper = Math.min(1, 0.66 + Math.min(ff, 1-ff)*1.7);  // soft ends, joints stay connected
+          let r = (r0 + (r1-r0)*ff) * taper;
+          r *= 0.74 + S(sd*9.7 + k*0.9)*0.5;                    // lumpy organic wobble
+          if(S(sd*11.3 + k*0.31) > 0.985) r *= 1.5;             // stray flyaway loops (hairy edge)
+          if(fx){ // pointer agitation: wires shake LOCALLY around the cursor, then settle
+            const bx = A[0]+bdx*ff, by = A[1]+bdy*ff;
             const e = fx.a * Math.max(0, 1 - Math.hypot(bx-fx.x, by-fx.y)/(scale*0.5));
-            wob += e*1.8;
-            r *= 1 + (S(sd*7.7 + k*1.9)-0.5)*e*0.5;
+            th += (S(sd*7.7 + k*1.9)-0.5)*e*1.8;
+            r  *= 1 + (S(sd*5.9 + k*2.3)-0.5)*e*0.5;
           }
-          const th = th0 + dir*f*tw*Math.PI*2 + (S(sd + k*2.7)-0.5)*wob;
-          const co = Math.cos(th)*r;                 // across the limb
-          const zi = Math.sin(th)*r;                 // "depth" -> shear along the axis: tilted rings read 3D
-          pts.push([ A[0] + bdx*f + pnx*co + ux*zi*0.30,
-                     A[1] + bdy*f + pny*co + uy*zi*0.30 ]);
+          const co = Math.cos(th)*r;                            // across the limb
+          const zi = Math.sin(th)*r;                            // depth -> slight axial shear reads 3D
+          pts.push([ A[0] + bdx*ff + pnx*co + ux*zi*0.30,
+                     A[1] + bdy*ff + pny*co + uy*zi*0.30 ]);
         }
-        out.push({ p: pts, a: (0.05 + S(sd*2.3)*0.07)*tone, w: 0.55 });
+        out.push({ p: pts, a: (0.045 + S(sd*2.3)*0.06)*tone, w: 0.55 });
       }
     }
 
-    // limbs & trunk — near-uniform FINE ring pitch (mantis wire look), count follows size
+    // limbs & trunk — dense scribble coverage; slight distal taper keeps limbs organic
     for(let b=0; b<BONES.length; b++){
       const A = KS[BONES[b][0]], C = KS[BONES[b][1]];
       const th = BONES[b][2]*scale;
       const blen = Math.hypot(C[0]-A[0], C[1]-A[1]) || 1;
-      const tone = 0.6 + Math.max(0, Math.min(1, (BONES[b][2]-0.03)/0.06))*0.7;
-      const wires = 3 + blen/40 + th/12;
-      const turns = Math.min(14, Math.max(2.5, blen/(9 + th*0.18)));
-      coil(A, C, th, th, wires, turns, tone, b*97.3);
+      const tone = 0.72 + Math.max(0, Math.min(1, (BONES[b][2]-0.03)/0.06))*0.58;
+      const wires = 4 + blen/22 + th/8;
+      coil(A, C, th, th*0.82, wires, 4, tone, b*97.3);
     }
 
     // HEAD — a coiled egg on the neck->head axis (same wire texture; ~1:7 proportions)
@@ -1094,7 +1102,7 @@
       const hr = 0.058*scale;
       const A = [Hd[0]-ux*hr*0.7, Hd[1]-uy*hr*0.7];   // chin end
       const C = [Hd[0]+ux*hr*0.8, Hd[1]+uy*hr*0.8];   // crown end (short axis -> round egg, not a pill)
-      coil(A, C, hr*0.88, hr*0.78, 8, 3.6, 1.0, 700);
+      coil(A, C, hr*0.88, hr*0.78, 12, 4, 1.0, 700);
     }
 
     // FINGERS — the reference's strongest "human" cue: the raised hand gets 5 splayed fingers
@@ -1113,7 +1121,7 @@
         const root = [Hn[0]+Math.cos(ang)*palm, Hn[1]+Math.sin(ang)*palm];
         const L = fl*lens[i];
         const tip = [Hn[0]+Math.cos(ang)*L, Hn[1]+Math.sin(ang)*L];
-        coil(root, tip, scale*0.0065, scale*0.004, 2, 2, 1.15, 900 + i*31);
+        coil(root, tip, scale*0.0065, scale*0.004, 2, 1, 1.15, 900 + i*31);  // fingers: long meanders, few curls
       }
       // palm mass bridging wrist -> fingers
       coil([Hn[0]-ux*scale*0.012, Hn[1]-uy*scale*0.012],
