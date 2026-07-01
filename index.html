@@ -1028,104 +1028,125 @@
     ['kneeR','footR', 0.04]
   ];
 
-  // WIRE-WOUND renderer — the mantis original is a 3D "wire sculpture": long wires
-  // COIL AROUND each body volume (cross-contour), so strokes geometrically cluster at
-  // the silhouette (a sine dwells at its extremes) => dark edges + lighter core = VOLUME.
-  // This replaces the old flat along-the-bone fill, which read as 2D cotton.
+  // WANDERING-WIRE renderer — matched to the original's drawing style: a FEW dozen LONG
+  // wires travel across the whole body (hand -> shoulder -> torso ...), sampled SPARSELY
+  // on the limb surfaces and joined by straight chords => angular, wireframe-like scribble.
+  // Interior stays airy; line weight/alpha has strong contrast (bold accents + hairlines);
+  // the raised hand alone gets a dense near-solid knot (the original's focal emphasis).
   function figureWires(KS, scale, narrow, fx){   // fx (optional): {x,y,a} pointer agitation field
     const S = (x)=>{ const s = Math.sin(x)*43758.5453; return s - Math.floor(s); };
     const out = [];
-    const dens = narrow ? 0.6 : 1;
+    const dens = narrow ? 0.65 : 1;
 
-    // A,C: screen-space ends; r0,r1: radius px; helical wires wrap the capsule
-    // one stroke = a RANDOM-WALK pen scribble wandering over the limb surface: variable curl
-    // speed, sudden direction reversals, strong radius wobble, stray flyaway loops. This is
-    // the original's hand-scribbled look — chaotic organic curls, NOT neat mechanical rings.
-    function coil(A, C, r0, r1, wires, curliness, tone, sd0){
-      const bdx = C[0]-A[0], bdy = C[1]-A[1];
-      const blen = Math.hypot(bdx, bdy) || 1;
-      const ux = bdx/blen, uy = bdy/blen;
-      const pnx = -uy, pny = ux;
-      const n = Math.max(2, Math.round(wires*dens));
-      const tightProb = Math.min(0.65, curliness*0.15);
-      for(let w=0; w<n; w++){
-        const sd = sd0 + w*13.7;
-        let th = S(sd)*Math.PI*2;
-        let dir = S(sd*1.3) > 0.5 ? 1 : -1;
-        const tight = S(sd*6.3) < tightProb;                    // tight curls vs long meanders
-        const dth = tight ? (0.5 + S(sd*7.1)*0.55) : (0.13 + S(sd*8.3)*0.22);
-        let f = S(sd*3.7)*0.3;
-        const fEnd = Math.min(1, f + 0.45 + S(sd*4.3)*0.5);
-        const STEPS = 44 + Math.floor(S(sd*5.1)*28);
-        const df = (fEnd - f)/STEPS;
-        const pts = [];
-        for(let k=0; k<=STEPS; k++){
-          if(S(sd + k*3.7) > 0.965) dir = -dir;                 // sudden reversals -> chaos
-          th += dir * dth * (0.6 + S(sd + k*1.3)*0.8);
-          f  += df  * (0.4 + S(sd + k*2.1)*1.2);
-          const ff = f < 0 ? 0 : (f > 1 ? 1 : f);
-          const taper = Math.min(1, 0.66 + Math.min(ff, 1-ff)*1.7);  // soft ends, joints stay connected
-          let r = (r0 + (r1-r0)*ff) * taper;
-          r *= 0.74 + S(sd*9.7 + k*0.9)*0.5;                    // lumpy organic wobble
-          if(S(sd*11.3 + k*0.31) > 0.985) r *= 1.5;             // stray flyaway loops (hairy edge)
-          if(fx){ // pointer agitation: wires shake LOCALLY around the cursor, then settle
-            const bx = A[0]+bdx*ff, by = A[1]+bdy*ff;
-            const e = fx.a * Math.max(0, 1 - Math.hypot(bx-fx.x, by-fx.y)/(scale*0.5));
-            th += (S(sd*7.7 + k*1.9)-0.5)*e*1.8;
-            r  *= 1 + (S(sd*5.9 + k*2.3)-0.5)*e*0.5;
-          }
-          const co = Math.cos(th)*r;                            // across the limb
-          const zi = Math.sin(th)*r;                            // depth -> slight axial shear reads 3D
-          pts.push([ A[0] + bdx*ff + pnx*co + ux*zi*0.30,
-                     A[1] + bdy*ff + pny*co + uy*zi*0.30 ]);
+    // virtual crown point lets strokes wander over the top of the head
+    const J = Object.assign({
+      crown: [ KS.head[0] + (KS.head[0]-KS.neck[0])*0.9,
+               KS.head[1] + (KS.head[1]-KS.neck[1])*0.9 ]
+    }, KS);
+
+    // CHAINS: joint paths a single stroke can travel end-to-end — [joint, radius] pairs.
+    // Weights skew coverage to torso + the featured raised arm (like the original).
+    const CHAINS = [
+      { w: 3,   path: [['handL',0.016],['elbowL',0.032],['shoulderL',0.048],['neck',0.05],['spineMid',0.075]] },
+      { w: 2,   path: [['handR',0.02],['elbowR',0.032],['shoulderR',0.048],['neck',0.05]] },
+      { w: 4,   path: [['crown',0.03],['head',0.056],['neck',0.045],['spineMid',0.075],['belly',0.068],['pelvis',0.072]] },
+      { w: 2,   path: [['shoulderL',0.044],['neck',0.05],['shoulderR',0.044],['spineMid',0.07]] },
+      { w: 2,   path: [['footL',0.024],['kneeL',0.04],['hipL',0.048],['pelvis',0.07],['spineMid',0.078]] },
+      { w: 2,   path: [['footR',0.024],['kneeR',0.04],['hipR',0.048],['pelvis',0.07]] },
+      { w: 1.5, path: [['handR',0.02],['belly',0.06],['pelvis',0.07]] },
+      { w: 1,   path: [['crown',0.028],['head',0.058],['neck',0.04]] }
+    ];
+    const totW = CHAINS.reduce((s,c)=>s+c.w, 0);
+
+    // resolve chain position t (0..1) + angle th to a point on the body surface
+    function surf(chain, t, th, rMul){
+      const segN = chain.length - 1;
+      const x = Math.min(segN - 1e-6, Math.max(0, t*segN));
+      const i = Math.floor(x), u = x - i;
+      const A = J[chain[i][0]], B = J[chain[i+1][0]];
+      const r = (chain[i][1]*(1-u) + chain[i+1][1]*u) * scale * rMul;
+      const bdx = B[0]-A[0], bdy = B[1]-A[1];
+      const bl = Math.hypot(bdx, bdy) || 1;
+      const co = Math.cos(th)*r, zi = Math.sin(th)*r;
+      return [ A[0] + bdx*u + (-bdy/bl)*co + (bdx/bl)*zi*0.3,
+               A[1] + bdy*u + ( bdx/bl)*co + (bdy/bl)*zi*0.3 ];
+    }
+
+    // one long wandering wire: sparse surface samples joined by straight chords
+    function wire(sd0){
+      let pick = S(sd0)*totW, chain = CHAINS[0].path;
+      for(const c of CHAINS){ pick -= c.w; if(pick <= 0){ chain = c.path; break; } }
+      let t  = S(sd0*1.7);
+      let dt = (0.008 + S(sd0*2.3)*0.03) * (S(sd0*3.1) > 0.5 ? 1 : -1);
+      let th = S(sd0*4.7)*Math.PI*2;
+      const smooth = S(sd0*15.7) < 0.35;               // ~1/3 are smoother sweeping curves
+      const jump = smooth ? 0.7 : 2.0;
+      const N = (smooth ? 44 : 24) + Math.floor(S(sd0*5.3)*40);
+      let fly = 0;
+      const pts = [];
+      for(let k=0; k<=N; k++){
+        th += (S(sd0 + k*7.3)-0.5) * (S(sd0 + k*3.1) > 0.9 ? 4.6 : jump); // chord jumps + big kinks
+        t  += dt * (0.5 + S(sd0 + k*1.9));
+        if(t > 1 || t < 0){ dt = -dt; t = t < 0 ? -t : 2 - t; }           // bounce at chain ends
+        let rMul = 0.9 + S(sd0*9.1 + k)*0.3;
+        if(fly > 0){ rMul *= 1.55; fly--; }                               // big loose outer loop
+        else if(S(sd0*11.7 + k*0.7) > 0.985) fly = 2 + Math.floor(S(sd0 + k)*3);
+        if(fx){ // pointer agitation kicks the walk angle locally, then settles
+          const p0 = surf(chain, t, th, 1);
+          const e = fx.a * Math.max(0, 1 - Math.hypot(p0[0]-fx.x, p0[1]-fx.y)/(scale*0.5));
+          th += (S(sd0*13.1 + k)-0.5)*e*3;
         }
-        out.push({ p: pts, a: (0.045 + S(sd*2.3)*0.06)*tone, w: 0.55 });
+        pts.push(surf(chain, t, th, rMul));
       }
+      // strong weight contrast like the original: bold accents / hairlines / faint ghosts
+      const cls = S(sd0*6.1);
+      const bold = cls > 0.92, faint = cls < 0.3;
+      out.push({ p: pts,
+                 a: bold ? 0.5 + S(sd0*8.3)*0.2 : (faint ? 0.08 + S(sd0*8.3)*0.07 : 0.16 + S(sd0*8.3)*0.16),
+                 w: bold ? 1.3 + S(sd0*9.7)*0.8 : 0.5 });
     }
 
-    // limbs & trunk — dense scribble coverage; slight distal taper keeps limbs organic
-    for(let b=0; b<BONES.length; b++){
-      const A = KS[BONES[b][0]], C = KS[BONES[b][1]];
-      const th = BONES[b][2]*scale;
-      const blen = Math.hypot(C[0]-A[0], C[1]-A[1]) || 1;
-      const tone = 0.72 + Math.max(0, Math.min(1, (BONES[b][2]-0.03)/0.06))*0.58;
-      const wires = 4 + blen/22 + th/8;
-      coil(A, C, th, th*0.82, wires, 4, tone, b*97.3);
-    }
+    const STROKES = Math.round(74 * dens);
+    for(let i=0; i<STROKES; i++) wire(i*17.3 + 3);
 
-    // HEAD — a coiled egg on the neck->head axis (same wire texture; ~1:7 proportions)
+    // FEATURED HAND — dense angular knots over palm + five splayed fingers (focal mass)
     {
-      const N = KS.neck, Hd = KS.head;
-      const ax = Hd[0]-N[0], ay = Hd[1]-N[1];
-      const al = Math.hypot(ax, ay) || 1;
-      const ux = ax/al, uy = ay/al;
-      const hr = 0.058*scale;
-      const A = [Hd[0]-ux*hr*0.7, Hd[1]-uy*hr*0.7];   // chin end
-      const C = [Hd[0]+ux*hr*0.8, Hd[1]+uy*hr*0.8];   // crown end (short axis -> round egg, not a pill)
-      coil(A, C, hr*0.88, hr*0.78, 12, 4, 1.0, 700);
-    }
-
-    // FINGERS — the reference's strongest "human" cue: the raised hand gets 5 splayed fingers
-    {
-      const E = KS.elbowL, Hn = KS.handL;
+      const E = J.elbowL, Hn = J.handL;
       const dx = Hn[0]-E[0], dy = Hn[1]-E[1];
       const dl = Math.hypot(dx, dy) || 1;
       const ux = dx/dl, uy = dy/dl;
       const base = Math.atan2(uy, ux);
-      const fl = scale*0.075;                          // long enough to clear the forearm coil
+      const fl = scale*0.075;
       const lens   = [0.6, 0.9, 1.0, 0.92, 0.72];      // thumb .. pinky
-      const spread = [-0.7, -0.28, 0, 0.26, 0.5];      // wide splay -> unmistakably a hand
-      const palm = scale*0.014;
+      const spread = [-0.7, -0.28, 0, 0.26, 0.5];
+      function knot(A, B, r0, r1, n, sd0){             // tight angular scribble along a tiny capsule
+        for(let s=0; s<n; s++){
+          const sd = sd0 + s*7.7;
+          let th = S(sd)*Math.PI*2, tt = S(sd*1.3)*0.4;
+          const NN = 12 + Math.floor(S(sd*2.1)*10);
+          const dtt = (0.6 + S(sd*3.3)*0.5)/NN;
+          const pts = [];
+          for(let k=0; k<=NN; k++){
+            th += (S(sd + k*5.1)-0.5)*2.6;
+            tt = Math.min(1, tt + dtt);
+            const r = (r0 + (r1-r0)*tt) * (0.85 + S(sd + k*1.7)*0.4);
+            const bdx = B[0]-A[0], bdy = B[1]-A[1];
+            const bl = Math.hypot(bdx, bdy) || 1;
+            pts.push([ A[0] + bdx*tt + (-bdy/bl)*Math.cos(th)*r + (bdx/bl)*Math.sin(th)*r*0.3,
+                       A[1] + bdy*tt + ( bdx/bl)*Math.cos(th)*r + (bdy/bl)*Math.sin(th)*r*0.3 ]);
+          }
+          const bold = S(sd*4.9) > 0.75;
+          out.push({ p: pts, a: bold ? 0.5 + S(sd*6.1)*0.2 : 0.24 + S(sd*6.1)*0.18, w: bold ? 1.1 : 0.55 });
+        }
+      }
       for(let i=0; i<5; i++){
         const ang = base + spread[i];
-        const root = [Hn[0]+Math.cos(ang)*palm, Hn[1]+Math.sin(ang)*palm];
-        const L = fl*lens[i];
-        const tip = [Hn[0]+Math.cos(ang)*L, Hn[1]+Math.sin(ang)*L];
-        coil(root, tip, scale*0.0065, scale*0.004, 2, 1, 1.15, 900 + i*31);  // fingers: long meanders, few curls
+        const root = [Hn[0]+Math.cos(ang)*scale*0.012, Hn[1]+Math.sin(ang)*scale*0.012];
+        const tip  = [Hn[0]+Math.cos(ang)*fl*lens[i],  Hn[1]+Math.sin(ang)*fl*lens[i]];
+        knot(root, tip, scale*0.007, scale*0.0035, 3, 900 + i*31);
       }
-      // palm mass bridging wrist -> fingers
-      coil([Hn[0]-ux*scale*0.012, Hn[1]-uy*scale*0.012],
-           [Hn[0]+ux*scale*0.014, Hn[1]+uy*scale*0.014], scale*0.016, scale*0.013, 3, 2.5, 0.95, 880);
+      knot([Hn[0]-ux*scale*0.014, Hn[1]-uy*scale*0.014],
+           [Hn[0]+ux*scale*0.016, Hn[1]+uy*scale*0.016], scale*0.02, scale*0.014, 7, 880);
     }
 
     return out;
