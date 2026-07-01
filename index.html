@@ -1007,6 +1007,14 @@
     footR:     [0.54, 0.93]
   };
   const POSES = [POSE_HOLD, POSE_DASH, POSE_RELIEF];   // scrubbed by full-page scroll
+  // depth profile (z, normalized; + = toward the viewer) — shared by all poses.
+  // The raised (kazasu) hand LEADS toward the camera, like the original's foreground hand.
+  const POSE_Z = {
+    head: 0.01, neck: 0, shoulderL: 0.05, shoulderR: -0.05, spineMid: 0,
+    pelvis: 0, belly: 0.045, elbowL: 0.09, handL: 0.17, elbowR: -0.02,
+    handR: 0.05, hipL: 0.025, hipR: -0.025, kneeL: 0.05, kneeR: -0.01,
+    footL: 0.02, footR: -0.04
+  };
   // bone list: [a, b, thickness(normalized capsule radius)]
   const BONES = [
     ['neck','head', 0.042],          // neck (the HEAD itself is a coiled egg, below)
@@ -1028,21 +1036,45 @@
     ['kneeR','footR', 0.04]
   ];
 
-  // WANDERING-WIRE renderer — matched to the original's drawing style: a FEW dozen LONG
-  // wires travel across the whole body (hand -> shoulder -> torso ...), sampled SPARSELY
-  // on the limb surfaces and joined by straight chords => angular, wireframe-like scribble.
-  // Interior stays airy; line weight/alpha has strong contrast (bold accents + hairlines);
-  // the raised hand alone gets a dense near-solid knot (the original's focal emphasis).
-  function figureWires(KS, scale, narrow, fx){   // fx (optional): {x,y,a} pointer agitation field
+  // TRUE-3D wandering-wire renderer — technique matched to the original: the walk happens
+  // on 3D volumes, is projected with PERSPECTIVE, and every short run of chords is styled
+  // by DEPTH — near wires draw dark/bold, far-side wires fade to ghost hairlines. The
+  // raised hand sits nearest the camera, so it projects LARGE and dark (the original's
+  // giant foreground hand), and a slight yaw toward the cursor turns the body in 3D.
+  function figureWires(KS, scale, narrow, fx, rotY){  // fx: {x,y,a} agitation; rotY: yaw rad
     const S = (x)=>{ const s = Math.sin(x)*43758.5453; return s - Math.floor(s); };
     const out = [];
     const dens = narrow ? 0.65 : 1;
 
-    // virtual crown point lets strokes wander over the top of the head
-    const J = Object.assign({
-      crown: [ KS.head[0] + (KS.head[0]-KS.neck[0])*0.9,
-               KS.head[1] + (KS.head[1]-KS.neck[1])*0.9 ]
-    }, KS);
+    // 3D joints [x,y,z] (z = 0 if the caller passes 2D points) + crown; yaw about the spine
+    const J = {};
+    for(const k in KS) J[k] = [ KS[k][0], KS[k][1], KS[k][2] || 0 ];
+    J.crown = [ J.head[0] + (J.head[0]-J.neck[0])*0.9,
+                J.head[1] + (J.head[1]-J.neck[1])*0.9, J.head[2] ];
+    const axX = J.spineMid[0], axY = J.spineMid[1];
+    const rot = rotY || 0, cR = Math.cos(rot), sR = Math.sin(rot);
+    for(const k in J){
+      const p = J[k], dx = p[0] - axX;
+      J[k] = [ axX + dx*cR - p[2]*sR, p[1], dx*sR + p[2]*cR ];
+    }
+
+    const PERS = scale*2.4;                        // camera distance (perspective strength)
+    function proj(x, y, z){                        // perspective about the figure's core
+      const s = PERS/(PERS - z);
+      return [ axX + (x-axX)*s, axY + (y-axY)*s, z ];
+    }
+    // split a 3D walk into short runs styled by DEPTH — the core of the original's look
+    function depthStyle(pts, aBase){
+      for(let i0 = 0; i0 < pts.length-1; i0 += 7){
+        const seg = pts.slice(i0, Math.min(pts.length, i0+8));
+        if(seg.length < 2) break;
+        let zm = 0; for(const p of seg) zm += p[2]; zm /= seg.length;
+        const zn = Math.max(0, Math.min(1, 0.5 + zm/(scale*0.26)));   // 0 far side .. 1 near
+        out.push({ p: seg.map(p=>[p[0], p[1]]),
+                   a: aBase*(0.22 + 0.78*zn*zn),
+                   w: 0.45 + (zn > 0.8 ? (zn-0.8)*4.5 : 0) });
+      }
+    }
 
     // CHAINS: joint paths a single stroke can travel end-to-end — [joint, radius] pairs.
     // Weights skew coverage to torso + the featured raised arm (like the original).
@@ -1060,7 +1092,7 @@
     ];
     const totW = CHAINS.reduce((s,c)=>s+c.w, 0);
 
-    // resolve chain position t (0..1) + angle th to a point on the body surface
+    // chain position t (0..1) + angle th -> 3D surface point, perspective-projected
     function surf(chain, t, th, rMul){
       const segN = chain.length - 1;
       const x = Math.min(segN - 1e-6, Math.max(0, t*segN));
@@ -1069,9 +1101,9 @@
       const r = (chain[i][1]*(1-u) + chain[i+1][1]*u) * scale * rMul;
       const bdx = B[0]-A[0], bdy = B[1]-A[1];
       const bl = Math.hypot(bdx, bdy) || 1;
-      const co = Math.cos(th)*r, zi = Math.sin(th)*r;
-      return [ A[0] + bdx*u + (-bdy/bl)*co + (bdx/bl)*zi*0.3,
-               A[1] + bdy*u + ( bdx/bl)*co + (bdy/bl)*zi*0.3 ];
+      return proj( A[0] + bdx*u + (-bdy/bl)*Math.cos(th)*r,
+                   A[1] + bdy*u + ( bdx/bl)*Math.cos(th)*r,
+                   A[2] + (B[2]-A[2])*u + Math.sin(th)*r );   // the ring's sin-axis IS real depth now
     }
 
     // one long wandering wire: sparse surface samples joined by straight chords
@@ -1100,12 +1132,9 @@
         }
         pts.push(surf(chain, t, th, rMul));
       }
-      // strong weight contrast like the original: bold accents / hairlines / faint ghosts
-      const cls = S(sd0*6.1);
-      const bold = cls > 0.94, faint = cls < 0.32;
-      out.push({ p: pts,
-                 a: bold ? 0.5 + S(sd0*8.3)*0.2 : (faint ? 0.07 + S(sd0*8.3)*0.06 : 0.12 + S(sd0*8.3)*0.12),
-                 w: bold ? 1.3 + S(sd0*9.7)*0.8 : 0.5 });
+      // weight now comes from DEPTH (near = bold/dark), with a light per-stroke base variation
+      const aBase = S(sd0*6.1) < 0.32 ? 0.10 + S(sd0*8.3)*0.06 : 0.2 + S(sd0*8.3)*0.14;
+      depthStyle(pts, aBase);
     }
 
     const STROKES = Math.round(150 * dens);   // many fine threads (original-level weave density)
@@ -1121,7 +1150,7 @@
       const fl = scale*0.075;
       const lens   = [0.6, 0.9, 1.0, 0.92, 0.72];      // thumb .. pinky
       const spread = [-0.7, -0.28, 0, 0.26, 0.5];
-      function knot(A, B, r0, r1, n, sd0){             // tight angular scribble along a tiny capsule
+      function knot(A, B, r0, r1, n, sd0){             // tight 3D scribble along a tiny capsule
         for(let s=0; s<n; s++){
           const sd = sd0 + s*7.7;
           let th = S(sd)*Math.PI*2, tt = S(sd*1.3)*0.4;
@@ -1134,21 +1163,22 @@
             const r = (r0 + (r1-r0)*tt) * (0.85 + S(sd + k*1.7)*0.4);
             const bdx = B[0]-A[0], bdy = B[1]-A[1];
             const bl = Math.hypot(bdx, bdy) || 1;
-            pts.push([ A[0] + bdx*tt + (-bdy/bl)*Math.cos(th)*r + (bdx/bl)*Math.sin(th)*r*0.3,
-                       A[1] + bdy*tt + ( bdx/bl)*Math.cos(th)*r + (bdy/bl)*Math.sin(th)*r*0.3 ]);
+            pts.push(proj( A[0] + bdx*tt + (-bdy/bl)*Math.cos(th)*r,
+                           A[1] + bdy*tt + ( bdx/bl)*Math.cos(th)*r,
+                           A[2] + (B[2]-A[2])*tt + Math.sin(th)*r ));
           }
-          const bold = S(sd*4.9) > 0.75;
-          out.push({ p: pts, a: bold ? 0.5 + S(sd*6.1)*0.2 : 0.24 + S(sd*6.1)*0.18, w: bold ? 1.1 : 0.55 });
+          depthStyle(pts, 0.26 + S(sd*6.1)*0.14);    // near-camera hand -> dark & bold by depth
         }
       }
+      const hz = Hn[2];
       for(let i=0; i<5; i++){
         const ang = base + spread[i];
-        const root = [Hn[0]+Math.cos(ang)*scale*0.012, Hn[1]+Math.sin(ang)*scale*0.012];
-        const tip  = [Hn[0]+Math.cos(ang)*fl*lens[i],  Hn[1]+Math.sin(ang)*fl*lens[i]];
-        knot(root, tip, scale*0.007, scale*0.0035, 3, 900 + i*31);
+        const root = [Hn[0]+Math.cos(ang)*scale*0.012, Hn[1]+Math.sin(ang)*scale*0.012, hz + scale*0.01];
+        const tip  = [Hn[0]+Math.cos(ang)*fl*lens[i],  Hn[1]+Math.sin(ang)*fl*lens[i],  hz + scale*0.03];
+        knot(root, tip, scale*0.007, scale*0.0035, 3, 900 + i*31);   // fingers reach TOWARD the camera
       }
-      knot([Hn[0]-ux*scale*0.014, Hn[1]-uy*scale*0.014],
-           [Hn[0]+ux*scale*0.016, Hn[1]+uy*scale*0.016], scale*0.02, scale*0.014, 7, 880);
+      knot([Hn[0]-ux*scale*0.014, Hn[1]-uy*scale*0.014, hz],
+           [Hn[0]+ux*scale*0.016, Hn[1]+uy*scale*0.016, hz], scale*0.02, scale*0.014, 7, 880);
     }
 
     return out;
@@ -1230,12 +1260,13 @@
         kxp += leanX*up*1.8;
         kyp += leanY*up*1.6;
       }
-      KS[nm] = [kxp, kyp];
+      KS[nm] = [kxp, kyp, (POSE_Z[nm]||0)*fig.scale];   // z: shared depth profile -> true 3D
     }
 
     // draw the wire-wound figure; pointer agitation shakes the wires locally, then settles
     const fx = (!REDUCED && figEnergy > 0.015) ? { x: mouseEase.x, y: mouseEase.y, a: figEnergy } : null;
-    const polys = figureWires(KS, fig.scale, W < 760, fx);
+    const rotYaw = REDUCED ? 0 : leanX*0.014;            // slight 3D turn toward the cursor
+    const polys = figureWires(KS, fig.scale, W < 760, fx, rotYaw);
     for(let i=0; i<polys.length; i++){
       const q = polys[i], P = q.p;
       ctx.strokeStyle = 'rgba(11,11,11,' + q.a.toFixed(3) + ')';
