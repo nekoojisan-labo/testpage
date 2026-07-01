@@ -485,6 +485,22 @@
   .toast.show{ opacity:1; transform:translate(-50%,0); }
 
   /* reveal */
+  /* ---- keyword marquee — 3D-tilted rows (mantis .brands_rows style) ---- */
+  .kwband{ padding:clamp(2.5rem,9vh,7rem) 0; overflow:hidden; }
+  .kwband__stage{ perspective:760px; }
+  .kwrow{ overflow:hidden; transform:rotateX(13deg) rotateY(-5deg); }
+  .kwrow--b{ transform:rotateX(13deg) rotateY(-5deg) translateY(-4px); opacity:.85; }
+  .kwtrack{ display:inline-flex; align-items:center; white-space:nowrap; will-change:transform;
+    font-family:var(--font-disp); font-weight:800; font-size:clamp(1.8rem,6.5vw,4.6rem);
+    letter-spacing:-.02em; color:var(--ink); line-height:1.15; }
+  .kwtrack span{ padding:0 .35em; }
+  .kwtrack .dot{ color:var(--accent); font-size:.5em; transform:translateY(-.12em); }
+  @media (prefers-reduced-motion: no-preference){
+    .kwrow--a .kwtrack{ animation:kwscroll 30s linear infinite; }
+    .kwrow--b .kwtrack{ animation:kwscroll 38s linear infinite reverse; }
+    @keyframes kwscroll{ from{ transform:translateX(0); } to{ transform:translateX(-50%); } }
+  }
+
   .reveal{ opacity:1; }
   @media (prefers-reduced-motion: no-preference){
     .reveal{ opacity:0; transform:translateY(24px);
@@ -618,6 +634,14 @@
     <span class="ln" data-line>あと3秒、</span>
     <span class="ln" data-line>耐えろ。</span>
   </p>
+</section>
+
+<!-- ======================= KEYWORD MARQUEE (3D-tilted, mantis .brands_rows-style) ======================= -->
+<section class="kwband" aria-hidden="true">
+  <div class="kwband__stage">
+    <div class="kwrow kwrow--a"><div class="kwtrack" id="kwA"></div></div>
+    <div class="kwrow kwrow--b"><div class="kwtrack" id="kwB"></div></div>
+  </div>
 </section>
 
 <!-- ======================= PILLAR 1 — ASOBI (あそびかた) ======================= -->
@@ -956,6 +980,27 @@
     footL:     [0.575,0.86],   // a natural mid-stride (not splayed)
     footR:     [0.43, 0.90]
   };
+  const POSE_RELIEF = {
+    // bottom of page: ARRIVED / relief — straightens up, BOTH arms thrown up, no more clutching.
+    head:      [0.50, 0.15],   // looking up, relieved
+    neck:      [0.50, 0.24],
+    shoulderL: [0.42, 0.275],
+    shoulderR: [0.58, 0.275],
+    spineMid:  [0.50, 0.39],   // upright
+    pelvis:    [0.50, 0.55],
+    belly:     [0.50, 0.50],
+    elbowL:    [0.35, 0.17],
+    handL:     [0.40, 0.06],   // both hands raised high (phew, made it)
+    elbowR:    [0.65, 0.17],
+    handR:     [0.60, 0.06],
+    hipL:      [0.46, 0.565],
+    hipR:      [0.54, 0.565],
+    kneeL:     [0.475,0.74],
+    kneeR:     [0.525,0.74],
+    footL:     [0.46, 0.93],
+    footR:     [0.54, 0.93]
+  };
+  const POSES = [POSE_HOLD, POSE_DASH, POSE_RELIEF];   // scrubbed by full-page scroll
   // bone list: [a, b, thickness(normalized capsule radius)]
   const BONES = [
     ['neck','head', 0.05],           // neck (the round HEAD is drawn as a disc, below)
@@ -967,9 +1012,8 @@
     ['shoulderL','elbowL', 0.04],    // upper arms (clear tubes)
     ['elbowL','handL', 0.034],       // forearms
     ['shoulderR','elbowR', 0.04],
-    ['elbowR','handR', 0.034],
-    ['handR','belly', 0.032],        // RIGHT hand clamps the belly (left hand is raised / scanning)
-    ['belly','pelvis', 0.055],       // lower-abdomen mass — anchors the clutch
+    ['elbowR','handR', 0.034],       // forearm ends at the belly in HOLD/DASH = reads as the clutch
+    ['belly','pelvis', 0.055],       // lower-abdomen mass
     ['pelvis','hipL', 0.05],
     ['pelvis','hipR', 0.05],
     ['hipL','kneeL', 0.05],          // thighs (thicker -> read clearly as legs)
@@ -1033,33 +1077,39 @@
       leanY = Math.max(-10, Math.min(14, (mouseEase.y - fig.cy)*0.025));
     }
 
-    // --- scroll-driven pose morph: HOLD (searching) at top -> DASH (running to the toilet) on scroll ---
-    const poseP = REDUCED ? 0 : Math.min(1, (window.scrollY||0) / ((window.innerHeight||800)*1.6));
-    const HOLDW = 1 - poseP, DASHW = poseP;
+    // --- pose is SCRUBBED by FULL-PAGE scroll through a keyframe sequence: HOLD -> DASH -> RELIEF ---
+    const maxS = Math.max(1, document.documentElement.scrollHeight - (window.innerHeight||800));
+    const gp   = REDUCED ? 0 : Math.min(1, (window.scrollY||0) / maxS);   // 0 (top) .. 1 (bottom)
+    const seg  = gp * (POSES.length - 1);                                 // position in the keyframe sequence
+    const i0   = Math.min(POSES.length-2, Math.floor(seg)), kf = seg - i0;
+    const P0 = POSES[i0], P1 = POSES[i0+1];
+    const searchW = Math.max(0, 1 - seg);                                 // 1 at HOLD -> 0 by DASH
+    const runW    = Math.max(0, 1 - Math.abs(seg - 1));                   // peaks at DASH
+    const reliefW = Math.max(0, Math.min(1, seg - 1));                    // 0 -> 1 toward RELIEF
     const SCAN   = REDUCED ? 0 : Math.sin(t*0.00075);          // search: raised hand sweeps the horizon
-    const RUN    = REDUCED ? 0 : Math.sin(t*0.006);            // dash: arm-pump + whole-body bob (NOT a leg flap)
+    const RUN    = REDUCED ? 0 : Math.sin(t*0.006);            // dash: arm-pump + whole-body bob
     const WANDER = REDUCED ? 0 : Math.sin(t*0.00026);          // amble left/right
     const STEP   = REDUCED ? 0 : Math.abs(Math.sin(t*0.0016)); // shuffle bob
+    const RELS   = REDUCED ? 0 : Math.sin(t*0.0012);           // relief: gentle raised-arm sway
 
     // --- flowing "thread" strokes ALONG each bone: defines limbs & makes the pose legible ---
     const KS = {};
     for(const nm in POSE_HOLD){
-      const a = POSE_HOLD[nm], b = POSE_DASH[nm];
-      let kx = a[0]*HOLDW + b[0]*DASHW;                        // lerp HOLD -> DASH by scroll
-      let ky = a[1]*HOLDW + b[1]*DASHW;
+      let kx = P0[nm][0]*(1-kf) + P1[nm][0]*kf;                // scrub between the two active keyframes
+      let ky = P0[nm][1]*(1-kf) + P1[nm][1]*kf;
       if(!REDUCED){
-        // searching (top): kazasu hand/head sweep; dashing (scrolled): a gentle arm pump (legs stay put)
-        if(nm === 'handL'){ kx += SCAN*0.13*HOLDW + RUN*0.05*DASHW; ky += (-0.015+Math.abs(SCAN)*0.02)*HOLDW - RUN*0.05*DASHW; }
-        else if(nm === 'elbowL'){ kx += SCAN*0.07*HOLDW + RUN*0.03*DASHW; }
-        else if(nm === 'head'){ kx += SCAN*0.045*HOLDW; }
-        // (legs are NOT cycled — that read as a weird foot-flap; the run is a whole-body bob below)
+        // phase flourishes: searching scan / dashing arm-pump / relief raised-arm sway
+        if(nm === 'handL'){ kx += SCAN*0.13*searchW + RUN*0.05*runW + RELS*0.03*reliefW; ky += (-0.015+Math.abs(SCAN)*0.02)*searchW - RUN*0.05*runW; }
+        else if(nm === 'elbowL'){ kx += SCAN*0.07*searchW + RUN*0.03*runW; }
+        else if(nm === 'handR'){ kx += RELS*0.03*reliefW; }
+        else if(nm === 'head'){ kx += SCAN*0.045*searchW; }
       }
       let kxp = fig.cx + (kx-0.5)*fig.scale*0.98;
       let kyp = fig.cy + (ky-0.5)*fig.scale;
       if(!REDUCED){
-        kxp += WANDER*fig.scale*0.07*HOLDW;                   // amble (mostly while searching)
+        kxp += WANDER*fig.scale*0.07*searchW;                 // amble (mostly while searching)
         kyp += STEP*3.5;                                      // shuffle bob
-        kyp += Math.abs(RUN)*3*DASHW;                         // gentle running bob (replaces the foot-flap)
+        kyp += Math.abs(RUN)*3*runW;                          // gentle running bob (peaks during the dash)
         kxp += Math.sin(t*0.0012 + kx*9.0)*1.2;               // fine breathing jitter
         const up = Math.max(0, 0.62 - ky);
         kxp += swayX*(0.4 + up) + leanX*up*1.8;
@@ -1463,6 +1513,33 @@
       if(sraf === null) sraf = requestAnimationFrame(tick);
     }, { passive:false });
   }
+
+  /* =========================================================
+     13. KEYWORD MARQUEE — decorative, 3D-tilted rows (mantis .brands_rows).
+     Pure CSS @keyframes drive the loop (and are gated off under reduced-motion
+     via the media query around .kwtrack's animation); JS only builds nodes
+     from the literal KEYWORDS array via textContent — no HTML parsing.
+     ========================================================= */
+  const KEYWORDS = ['ガマンダッシュ','トイレダッシュ','ガマンゲージ','片手アクション','限界ガマニスト','全力疾走','あと3秒'];
+  function fillTrack(id, words){
+    const el = document.getElementById(id);
+    if(!el) return;
+    const build = ()=>{
+      const frag = document.createDocumentFragment();
+      words.forEach(w=>{
+        const span = document.createElement('span');
+        span.appendChild(document.createTextNode(w));
+        const dot = document.createElement('span');
+        dot.className = 'dot'; dot.textContent = '●';
+        span.appendChild(dot);
+        frag.appendChild(span);
+      });
+      return frag;
+    };
+    el.appendChild(build()); el.appendChild(build());   // duplicated for a seamless -50% loop
+  }
+  fillTrack('kwA', KEYWORDS);
+  fillTrack('kwB', [...KEYWORDS].reverse());
 
 })();
 </script>
