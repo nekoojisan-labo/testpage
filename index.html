@@ -1113,18 +1113,18 @@
       let t  = S(sd0*1.7);
       let dt = (0.008 + S(sd0*2.3)*0.03) * (S(sd0*3.1) > 0.5 ? 1 : -1);
       let th = S(sd0*4.7)*Math.PI*2;
-      const smooth = S(sd0*15.7) < 0.35;               // ~1/3 are smoother sweeping curves
-      const jump = smooth ? 0.7 : 2.0;
+      const smooth = S(sd0*15.7) < 0.25;               // a few smoother sweeps; the rest scribbles hard
+      const jump = smooth ? 0.8 : 2.6;
       const N = (smooth ? 44 : 24) + Math.floor(S(sd0*5.3)*40);
       let fly = 0;
       const pts = [];
       for(let k=0; k<=N; k++){
-        th += (S(sd0 + k*7.3)-0.5) * (S(sd0 + k*3.1) > 0.9 ? 4.6 : jump); // chord jumps + big kinks
+        th += (S(sd0 + k*7.3)-0.5) * (S(sd0 + k*3.1) > 0.87 ? 5.2 : jump); // wilder jumps + kinks
         t  += dt * (0.5 + S(sd0 + k*1.9));
-        if(t > 1 || t < 0){ dt = -dt; t = t < 0 ? -t : 2 - t; }           // bounce at chain ends
-        let rMul = 0.9 + S(sd0*9.1 + k)*0.3;
-        if(fly > 0){ rMul *= 1.55; fly--; }                               // big loose outer loop
-        else if(S(sd0*11.7 + k*0.7) > 0.985) fly = 2 + Math.floor(S(sd0 + k)*3);
+        if(t > 1 || t < 0){ dt = -dt; t = t < 0 ? -t : 2 - t; }            // bounce at chain ends
+        let rMul = 0.82 + S(sd0*9.1 + k)*0.45;                             // loose, lumpy orbit
+        if(fly > 0){ rMul *= 1.55; fly--; }                                // big loose outer loop
+        else if(S(sd0*11.7 + k*0.7) > 0.975) fly = 2 + Math.floor(S(sd0 + k)*3);
         if(fx){ // pointer agitation kicks the walk angle locally, then settles
           const p0 = surf(chain, t, th, 1);
           const e = fx.a * Math.max(0, 1 - Math.hypot(p0[0]-fx.x, p0[1]-fx.y)/(scale*0.5));
@@ -1140,45 +1140,64 @@
     const STROKES = Math.round(150 * dens);   // many fine threads (original-level weave density)
     for(let i=0; i<STROKES; i++) wire(i*17.3 + 3);
 
-    // FEATURED HAND — dense angular knots over palm + five splayed fingers (focal mass)
+    // FEATURED HAND — unlike the loose body scribble, the hand is drawn PRECISELY (the
+    // original's hand reads as a real hand): articulated two-segment fingers as tapered
+    // tubes with tight cross-contour rings + silhouette edges, and a structured palm.
     {
       const E = J.elbowL, Hn = J.handL;
-      const dx = Hn[0]-E[0], dy = Hn[1]-E[1];
-      const dl = Math.hypot(dx, dy) || 1;
-      const ux = dx/dl, uy = dy/dl;
+      const dl = Math.hypot(Hn[0]-E[0], Hn[1]-E[1]) || 1;
+      const ux = (Hn[0]-E[0])/dl, uy = (Hn[1]-E[1])/dl;
       const base = Math.atan2(uy, ux);
+      const hz = Hn[2];
+
+      // precise tube: regular cross-contour rings (tiny wobble) + 2 silhouette edge lines
+      function tube(A, B, r0, r1, sd0, aB){
+        const bdx = B[0]-A[0], bdy = B[1]-A[1], bdz = B[2]-A[2];
+        const bl = Math.hypot(bdx, bdy) || 1;
+        const pnx = -bdy/bl, pny = bdx/bl;
+        const rings = Math.max(3, Math.round(bl/((r0+r1)*0.42)));   // fine ring pitch -> solid hand
+        for(let g=0; g<=rings; g++){
+          const f = g/rings;
+          const r = r0 + (r1-r0)*f;
+          const pts = [], RS = 9;
+          for(let k=0; k<=RS; k++){
+            const th = k/RS*Math.PI*2 + S(sd0+g*3.1)*0.7;
+            const wob = 1 + (S(sd0 + g*7.7 + k)-0.5)*0.12;          // near-precise rings
+            pts.push(proj( A[0]+bdx*f + pnx*Math.cos(th)*r*wob,
+                           A[1]+bdy*f + pny*Math.cos(th)*r*wob,
+                           A[2]+bdz*f + Math.sin(th)*r*wob ));
+          }
+          depthStyle(pts, aB);
+        }
+        for(let side=-1; side<=1; side+=2){                          // silhouette edges
+          const pts = [], ES = 8;
+          for(let k=0; k<=ES; k++){
+            const f = k/ES;
+            const r = (r0 + (r1-r0)*f) * (1 + (S(sd0*1.9 + k)-0.5)*0.1);
+            pts.push(proj( A[0]+bdx*f + pnx*side*r, A[1]+bdy*f + pny*side*r, A[2]+bdz*f ));
+          }
+          depthStyle(pts, aB*0.9);
+        }
+      }
+
       const fl = scale*0.075;
       const lens   = [0.6, 0.9, 1.0, 0.92, 0.72];      // thumb .. pinky
       const spread = [-0.7, -0.28, 0, 0.26, 0.5];
-      function knot(A, B, r0, r1, n, sd0){             // tight 3D scribble along a tiny capsule
-        for(let s=0; s<n; s++){
-          const sd = sd0 + s*7.7;
-          let th = S(sd)*Math.PI*2, tt = S(sd*1.3)*0.4;
-          const NN = 12 + Math.floor(S(sd*2.1)*10);
-          const dtt = (0.6 + S(sd*3.3)*0.5)/NN;
-          const pts = [];
-          for(let k=0; k<=NN; k++){
-            th += (S(sd + k*5.1)-0.5)*2.6;
-            tt = Math.min(1, tt + dtt);
-            const r = (r0 + (r1-r0)*tt) * (0.85 + S(sd + k*1.7)*0.4);
-            const bdx = B[0]-A[0], bdy = B[1]-A[1];
-            const bl = Math.hypot(bdx, bdy) || 1;
-            pts.push(proj( A[0] + bdx*tt + (-bdy/bl)*Math.cos(th)*r,
-                           A[1] + bdy*tt + ( bdx/bl)*Math.cos(th)*r,
-                           A[2] + (B[2]-A[2])*tt + Math.sin(th)*r ));
-          }
-          depthStyle(pts, 0.26 + S(sd*6.1)*0.14);    // near-camera hand -> dark & bold by depth
-        }
-      }
-      const hz = Hn[2];
+      const curl   = [0.5, 0.3, 0.25, 0.3, 0.38];      // distal bend -> naturally curled fingers
       for(let i=0; i<5; i++){
         const ang = base + spread[i];
-        const root = [Hn[0]+Math.cos(ang)*scale*0.012, Hn[1]+Math.sin(ang)*scale*0.012, hz + scale*0.01];
-        const tip  = [Hn[0]+Math.cos(ang)*fl*lens[i],  Hn[1]+Math.sin(ang)*fl*lens[i],  hz + scale*0.03];
-        knot(root, tip, scale*0.007, scale*0.0035, 3, 900 + i*31);   // fingers reach TOWARD the camera
+        const L = fl*lens[i];
+        const root = [Hn[0]+Math.cos(ang)*scale*0.012, Hn[1]+Math.sin(ang)*scale*0.012, hz + scale*0.008];
+        const kn   = [Hn[0]+Math.cos(ang)*L*0.55,      Hn[1]+Math.sin(ang)*L*0.55,      hz + scale*0.02];
+        const ang2 = ang + curl[i]*0.6;
+        const tip  = [kn[0]+Math.cos(ang2)*L*0.45,     kn[1]+Math.sin(ang2)*L*0.45,     hz + scale*0.028];
+        tube(root, kn,  scale*0.0068, scale*0.0058, 950 + i*37, 0.34);   // proximal segment
+        tube(kn,   tip, scale*0.0056, scale*0.0032, 990 + i*41, 0.34);   // distal (tapered to the tip)
       }
-      knot([Hn[0]-ux*scale*0.014, Hn[1]-uy*scale*0.014, hz],
-           [Hn[0]+ux*scale*0.016, Hn[1]+uy*scale*0.016, hz], scale*0.02, scale*0.014, 7, 880);
+      // palm: broader precise tube from the wrist to the knuckle line
+      tube([Hn[0]-ux*scale*0.022, Hn[1]-uy*scale*0.022, hz],
+           [Hn[0]+ux*scale*0.012, Hn[1]+uy*scale*0.012, hz + scale*0.008],
+           scale*0.02, scale*0.024, 880, 0.3);
     }
 
     return out;
