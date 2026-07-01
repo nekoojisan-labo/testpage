@@ -68,6 +68,20 @@
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
+  /* the ONE perpetual animation the original has: the film grain jumps at steps(2)
+     (mantis .noise / noiseAnimation) — everything else on the page moves only with input */
+  @media (prefers-reduced-motion: no-preference){
+    .grain{ inset:-60%; will-change:transform; animation:grainJump 1s steps(2) infinite; }
+    @keyframes grainJump{
+      0%{ transform:translate3d(0,9rem,0) } 10%{ transform:translate3d(-1rem,-4rem,0) }
+      20%{ transform:translate3d(-8rem,2rem,0) } 30%{ transform:translate3d(9rem,-9rem,0) }
+      40%{ transform:translate3d(-2rem,7rem,0) } 50%{ transform:translate3d(-9rem,-4rem,0) }
+      60%{ transform:translate3d(2rem,6rem,0) } 70%{ transform:translate3d(7rem,-8rem,0) }
+      80%{ transform:translate3d(-9rem,1rem,0) } 90%{ transform:translate3d(6rem,-5rem,0) }
+      100%{ transform:translate3d(0,9rem,0) }
+    }
+  }
+
   a{ color:inherit; }
 
   /* ---- focus (B) ---- */
@@ -126,10 +140,7 @@
     width:7px; height:7px; border-radius:50%; background:var(--accent);
     box-shadow:0 0 0 0 rgba(60,224,72,.6);
   }
-  @media (prefers-reduced-motion: no-preference){
-    .live-dot{ animation:pulse 1.8s ease-out infinite; }
-    @keyframes pulse{ 0%{ box-shadow:0 0 0 0 rgba(60,224,72,.55);} 100%{ box-shadow:0 0 0 9px rgba(60,224,72,0);} }
-  }
+  /* dot is static — the original page has no perpetual animation besides the grain */
 
   /* top-right nav */
   .ch-tr{ top:var(--edge); right:var(--edge); display:flex; align-items:center; gap:.9rem; }
@@ -187,10 +198,7 @@
     position:fixed; left:clamp(1rem,7vw,8rem); bottom:clamp(4rem,12vh,9rem);
     width:clamp(46px,7vw,92px); height:auto; z-index:3; pointer-events:none;
   }
-  @media (prefers-reduced-motion: no-preference){
-    .green-mark{ animation:markdrift 6s ease-in-out infinite; transform-origin:center; }
-    @keyframes markdrift{ 0%,100%{ transform:rotate(0); } 50%{ transform:rotate(8deg) scale(1.04); } }
-  }
+  /* mark is static, like the original's green mantis mark */
 
   /* persistent figure: a FIXED full-viewport layer behind the content, so the
      character stays on screen (and keeps animating) through the whole scroll */
@@ -240,10 +248,7 @@
     position:absolute; left:50%; bottom:1.4rem; transform:translateX(-50%);
     z-index:4; display:flex; flex-direction:column; align-items:center; gap:.3rem;
   }
-  @media (prefers-reduced-motion: no-preference){
-    .scroll-cue svg{ animation:cuebob 1.8s ease-in-out infinite; }
-    @keyframes cuebob{ 0%,100%{ transform:translateY(0);} 50%{ transform:translateY(5px);} }
-  }
+  /* cue arrow is static (no perpetual bob) */
 
   /* =========================================================
      FULL-VIEWPORT SCROLL STATEMENTS
@@ -398,6 +403,9 @@
     @keyframes gm-kr{ 0%,100%{ transform:rotate(0);} 50%{ transform:rotate(-5deg);} }
     @keyframes gm-shiver{ 0%,90%,100%{ transform:translateX(0);} 92%{ transform:translateX(-2px);} 94%{ transform:translateX(2px);} 96%{ transform:translateX(-2px);} }
     @keyframes gm-bead{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.18);} }
+    /* the mascot squirms ONLY while engaged (hover/tap-focus) — no idle animation */
+    #mascot, #mascot *{ animation-play-state:paused !important; }
+    #mascot:hover, #mascot:hover *{ animation-play-state:running !important; }
   }
 
   .chars{ display:grid; gap:1px; margin-top:2.4rem; background:var(--line); border:1px solid var(--line); }
@@ -495,11 +503,7 @@
     letter-spacing:-.02em; color:var(--ink); line-height:1.15; }
   .kwtrack span{ padding:0 .35em; }
   .kwtrack .dot{ color:var(--accent); font-size:.5em; transform:translateY(-.12em); }
-  @media (prefers-reduced-motion: no-preference){
-    .kwrow--a .kwtrack{ animation:kwscroll 30s linear infinite; }
-    .kwrow--b .kwtrack{ animation:kwscroll 38s linear infinite reverse; }
-    @keyframes kwscroll{ from{ transform:translateX(0); } to{ transform:translateX(-50%); } }
-  }
+  /* rows are SCROLL-DRIVEN by JS (like mantis .brands_rows) — no perpetual marquee */
 
   .reveal{ opacity:1; }
   @media (prefers-reduced-motion: no-preference){
@@ -937,7 +941,8 @@
 
   // --- normalized keypoints (x,y in 0..1; origin top-left of fig box) ---
   // Figure drawn centered; box is taller than wide.
-  // Two pose keyframes — the figure MORPHS HOLD -> DASH with scroll (lerped per frame in renderFrame).
+  /* FIGURE-GEOM-BEGIN — pure geometry (no DOM). The Node harness in the scratchpad
+     extracts this exact block to rasterize verification PNGs; keep it side-effect-free. */
   const POSE_HOLD = {
     // top of page: WANDERING & searching — LEFT hand raised over the brow (かざす / scanning),
     // RIGHT hand clamps the belly, legs crossed + on tip-toe.
@@ -1003,10 +1008,10 @@
   const POSES = [POSE_HOLD, POSE_DASH, POSE_RELIEF];   // scrubbed by full-page scroll
   // bone list: [a, b, thickness(normalized capsule radius)]
   const BONES = [
-    ['neck','head', 0.05],           // neck (the round HEAD is drawn as a disc, below)
-    ['shoulderL','shoulderR', 0.055],// shoulder line -> reads as shoulders
-    ['neck','spineMid', 0.085],      // chest
-    ['spineMid','pelvis', 0.10],     // trunk (thick) -> clear torso mass
+    ['neck','head', 0.042],          // neck (the HEAD itself is a coiled egg, below)
+    ['shoulderL','shoulderR', 0.036],// shoulder line -> reads as shoulders (thin, no chest donut)
+    ['neck','spineMid', 0.07],       // chest
+    ['spineMid','pelvis', 0.08],     // trunk -> clear torso mass
     ['shoulderL','spineMid', 0.055],
     ['shoulderR','spineMid', 0.055],
     ['shoulderL','elbowL', 0.04],    // upper arms (clear tubes)
@@ -1022,14 +1027,109 @@
     ['kneeR','footR', 0.04]
   ];
 
+  // WIRE-WOUND renderer — the mantis original is a 3D "wire sculpture": long wires
+  // COIL AROUND each body volume (cross-contour), so strokes geometrically cluster at
+  // the silhouette (a sine dwells at its extremes) => dark edges + lighter core = VOLUME.
+  // This replaces the old flat along-the-bone fill, which read as 2D cotton.
+  function figureWires(KS, scale, narrow, fx){   // fx (optional): {x,y,a} pointer agitation field
+    const S = (x)=>{ const s = Math.sin(x)*43758.5453; return s - Math.floor(s); };
+    const out = [];
+    const dens = narrow ? 0.6 : 1;
+
+    // A,C: screen-space ends; r0,r1: radius px; helical wires wrap the capsule
+    function coil(A, C, r0, r1, wires, turns, tone, sd0){
+      const bdx = C[0]-A[0], bdy = C[1]-A[1];
+      const blen = Math.hypot(bdx, bdy) || 1;
+      const ux = bdx/blen, uy = bdy/blen;
+      const pnx = -uy, pny = ux;
+      const n = Math.max(2, Math.round(wires*dens));
+      for(let w=0; w<n; w++){
+        const sd = sd0 + w*13.7;
+        const th0 = S(sd)*Math.PI*2;
+        const dir = S(sd*1.3) > 0.5 ? 1 : -1;
+        const tw  = turns*(0.85 + S(sd*2.1)*0.35);
+        const f0  = S(sd*3.7)*0.15;
+        const f1  = Math.min(1, f0 + 0.7 + S(sd*4.3)*0.35);
+        const STEPS = Math.min(140, Math.max(30, Math.round(tw*12)));
+        const pts = [];
+        for(let k=0; k<=STEPS; k++){
+          const f = f0 + (f1-f0)*(k/STEPS);
+          const taper = Math.min(1, 0.55 + Math.min(f, 1-f)*2.0);   // soft ends -> adjacent coils merge
+          let r = (r0 + (r1-r0)*f) * taper;
+          let wob = 0.22;
+          if(fx){ // pointer agitation: wires shake LOCALLY around the cursor, then settle (input-driven)
+            const bx = A[0]+bdx*f, by = A[1]+bdy*f;
+            const e = fx.a * Math.max(0, 1 - Math.hypot(bx-fx.x, by-fx.y)/(scale*0.5));
+            wob += e*1.8;
+            r *= 1 + (S(sd*7.7 + k*1.9)-0.5)*e*0.5;
+          }
+          const th = th0 + dir*f*tw*Math.PI*2 + (S(sd + k*2.7)-0.5)*wob;
+          const co = Math.cos(th)*r;                 // across the limb
+          const zi = Math.sin(th)*r;                 // "depth" -> shear along the axis: tilted rings read 3D
+          pts.push([ A[0] + bdx*f + pnx*co + ux*zi*0.30,
+                     A[1] + bdy*f + pny*co + uy*zi*0.30 ]);
+        }
+        out.push({ p: pts, a: (0.05 + S(sd*2.3)*0.07)*tone, w: 0.55 });
+      }
+    }
+
+    // limbs & trunk — near-uniform FINE ring pitch (mantis wire look), count follows size
+    for(let b=0; b<BONES.length; b++){
+      const A = KS[BONES[b][0]], C = KS[BONES[b][1]];
+      const th = BONES[b][2]*scale;
+      const blen = Math.hypot(C[0]-A[0], C[1]-A[1]) || 1;
+      const tone = 0.6 + Math.max(0, Math.min(1, (BONES[b][2]-0.03)/0.06))*0.7;
+      const wires = 3 + blen/40 + th/12;
+      const turns = Math.min(14, Math.max(2.5, blen/(9 + th*0.18)));
+      coil(A, C, th, th, wires, turns, tone, b*97.3);
+    }
+
+    // HEAD — a coiled egg on the neck->head axis (same wire texture; ~1:7 proportions)
+    {
+      const N = KS.neck, Hd = KS.head;
+      const ax = Hd[0]-N[0], ay = Hd[1]-N[1];
+      const al = Math.hypot(ax, ay) || 1;
+      const ux = ax/al, uy = ay/al;
+      const hr = 0.058*scale;
+      const A = [Hd[0]-ux*hr*0.7, Hd[1]-uy*hr*0.7];   // chin end
+      const C = [Hd[0]+ux*hr*0.8, Hd[1]+uy*hr*0.8];   // crown end (short axis -> round egg, not a pill)
+      coil(A, C, hr*0.88, hr*0.78, 8, 3.6, 1.0, 700);
+    }
+
+    // FINGERS — the reference's strongest "human" cue: the raised hand gets 5 splayed fingers
+    {
+      const E = KS.elbowL, Hn = KS.handL;
+      const dx = Hn[0]-E[0], dy = Hn[1]-E[1];
+      const dl = Math.hypot(dx, dy) || 1;
+      const ux = dx/dl, uy = dy/dl;
+      const base = Math.atan2(uy, ux);
+      const fl = scale*0.075;                          // long enough to clear the forearm coil
+      const lens   = [0.6, 0.9, 1.0, 0.92, 0.72];      // thumb .. pinky
+      const spread = [-0.7, -0.28, 0, 0.26, 0.5];      // wide splay -> unmistakably a hand
+      const palm = scale*0.014;
+      for(let i=0; i<5; i++){
+        const ang = base + spread[i];
+        const root = [Hn[0]+Math.cos(ang)*palm, Hn[1]+Math.sin(ang)*palm];
+        const L = fl*lens[i];
+        const tip = [Hn[0]+Math.cos(ang)*L, Hn[1]+Math.sin(ang)*L];
+        coil(root, tip, scale*0.0065, scale*0.004, 2, 2, 1.15, 900 + i*31);
+      }
+      // palm mass bridging wrist -> fingers
+      coil([Hn[0]-ux*scale*0.012, Hn[1]-uy*scale*0.012],
+           [Hn[0]+ux*scale*0.014, Hn[1]+uy*scale*0.014], scale*0.016, scale*0.013, 3, 2.5, 0.95, 880);
+    }
+
+    return out;
+  }
+  /* FIGURE-GEOM-END */
+
   let DPR = 1, W = 0, H = 0;
   const fig = { cx:0, cy:0, scale:0 };
 
   const mouse = { x:-9999, y:-9999, active:false };
   const mouseEase = { x:-9999, y:-9999 };
 
-  // The figure is drawn each frame as FORM-FOLLOWING sketch lines (along-bone fill +
-  // silhouette outline + a round head), straight from the K/BONES skeleton — no point cloud.
+  // The figure is stroked from the wire-coil polylines of figureWires() (FIGURE-GEOM block above).
 
   function layout(){
     DPR = Math.min(window.devicePixelRatio||1, 2);
@@ -1042,153 +1142,82 @@
     fig.cy = H*0.52;
   }
 
-  function srand(seed){ const s = Math.sin(seed)*43758.5453; return s - Math.floor(s); }
 
   let figVisible = true;
   let rafId = null;
   let lastDraw = 0;
-  const FIG_FRAME_MS = 1000/30;   // cap the figure to ~30fps — a slow idle sway needs no more
+  let figEnergy = 0;              // pointer agitation 0..1 — decays each frame; motion is INPUT-driven only
+  let lastScrollT = -9999;        // last scroll timestamp — keeps the loop alive briefly while scrubbing
+  const FIG_FRAME_MS = 1000/30;   // 30fps cap while ACTIVE; the loop PARKS once everything settles
 
+  // Like the original (verified against mantis's shipped CSS/JS): the figure has NO idle
+  // animation. It moves only with INPUT — scroll scrubs the pose, pointer movement agitates
+  // the wires and leans the body — then it settles and the rAF loop PARKS (rafId=null).
   function renderFrame(now){
     now = now || 0;
-    if(!REDUCED && figVisible){
-      rafId = requestAnimationFrame(renderFrame);
-      if(now - lastDraw < FIG_FRAME_MS) return;    // throttle: skip this frame's draw
-      lastDraw = now;
-    } else { rafId = null; }                        // REDUCED: fall through for a single static render
+    if(!REDUCED && figVisible && (now - lastDraw < FIG_FRAME_MS)){
+      rafId = requestAnimationFrame(renderFrame); return;   // 30fps throttle while active
+    }
+    lastDraw = now;
     ctx.clearRect(0,0,W,H);
     ctx.lineCap = 'round';
 
-    if(!REDUCED){ // ease pointer (spring); recede to far on leave
-      const tx = mouse.active ? mouse.x : -9999;
-      const ty = mouse.active ? mouse.y : -9999;
+    let easing = false;
+    if(!REDUCED){ // ease pointer (spring); agitation decays -> the figure comes to rest
+      const tx = mouse.active ? mouse.x : mouseEase.x;
+      const ty = mouse.active ? mouse.y : mouseEase.y;
       if(mouseEase.x < -9000){ mouseEase.x = tx; mouseEase.y = ty; }
       mouseEase.x += (tx - mouseEase.x)*0.18;
       mouseEase.y += (ty - mouseEase.y)*0.18;
+      easing = (Math.abs(tx - mouseEase.x) + Math.abs(ty - mouseEase.y)) > 0.7;
+      figEnergy *= 0.93;
     }
 
-    const t = now || 0;
-
-    // figure-wide idle sway + a subtle cursor-aware lean (upper body leans more → "it notices you")
-    const swayX = REDUCED ? 0 : Math.sin(t*0.0004)*3.5;
     let leanX = 0, leanY = 0;
-    if(!REDUCED && mouse.active){
+    if(!REDUCED && mouseEase.x > -9000){ // upper body leans toward the cursor (input-driven)
       leanX = Math.max(-20, Math.min(20, (mouseEase.x - fig.cx)*0.05));
       leanY = Math.max(-10, Math.min(14, (mouseEase.y - fig.cy)*0.025));
     }
 
-    // --- pose is SCRUBBED by FULL-PAGE scroll through a keyframe sequence: HOLD -> DASH -> RELIEF ---
+    // --- pose is SCRUBBED by FULL-PAGE scroll through the keyframes: HOLD -> DASH -> RELIEF ---
     const maxS = Math.max(1, document.documentElement.scrollHeight - (window.innerHeight||800));
-    const gp   = REDUCED ? 0 : Math.min(1, (window.scrollY||0) / maxS);   // 0 (top) .. 1 (bottom)
-    const seg  = gp * (POSES.length - 1);                                 // position in the keyframe sequence
+    // clamp BOTH ends: rubber-band overscroll makes scrollY negative (was a POSES[-1] crash)
+    const gp   = REDUCED ? 0 : Math.min(1, Math.max(0, (window.scrollY||0) / maxS));
+    const seg  = gp * (POSES.length - 1);
     const i0   = Math.min(POSES.length-2, Math.floor(seg)), kf = seg - i0;
     const P0 = POSES[i0], P1 = POSES[i0+1];
-    const searchW = Math.max(0, 1 - seg);                                 // 1 at HOLD -> 0 by DASH
-    const runW    = Math.max(0, 1 - Math.abs(seg - 1));                   // peaks at DASH
-    const reliefW = Math.max(0, Math.min(1, seg - 1));                    // 0 -> 1 toward RELIEF
-    const SCAN   = REDUCED ? 0 : Math.sin(t*0.00075);          // search: raised hand sweeps the horizon
-    const RUN    = REDUCED ? 0 : Math.sin(t*0.006);            // dash: arm-pump + whole-body bob
-    const WANDER = REDUCED ? 0 : Math.sin(t*0.00026);          // amble left/right
-    const STEP   = REDUCED ? 0 : Math.abs(Math.sin(t*0.0016)); // shuffle bob
-    const RELS   = REDUCED ? 0 : Math.sin(t*0.0012);           // relief: gentle raised-arm sway
 
-    // --- flowing "thread" strokes ALONG each bone: defines limbs & makes the pose legible ---
     const KS = {};
     for(const nm in POSE_HOLD){
-      let kx = P0[nm][0]*(1-kf) + P1[nm][0]*kf;                // scrub between the two active keyframes
-      let ky = P0[nm][1]*(1-kf) + P1[nm][1]*kf;
-      if(!REDUCED){
-        // phase flourishes: searching scan / dashing arm-pump / relief raised-arm sway
-        if(nm === 'handL'){ kx += SCAN*0.13*searchW + RUN*0.05*runW + RELS*0.03*reliefW; ky += (-0.015+Math.abs(SCAN)*0.02)*searchW - RUN*0.05*runW; }
-        else if(nm === 'elbowL'){ kx += SCAN*0.07*searchW + RUN*0.03*runW; }
-        else if(nm === 'handR'){ kx += RELS*0.03*reliefW; }
-        else if(nm === 'head'){ kx += SCAN*0.045*searchW; }
-      }
+      const kx = P0[nm][0]*(1-kf) + P1[nm][0]*kf;             // scrub between the two active keyframes
+      const ky = P0[nm][1]*(1-kf) + P1[nm][1]*kf;
       let kxp = fig.cx + (kx-0.5)*fig.scale*0.98;
       let kyp = fig.cy + (ky-0.5)*fig.scale;
       if(!REDUCED){
-        kxp += WANDER*fig.scale*0.07*searchW;                 // amble (mostly while searching)
-        kyp += STEP*3.5;                                      // shuffle bob
-        kyp += Math.abs(RUN)*3*runW;                          // gentle running bob (peaks during the dash)
-        kxp += Math.sin(t*0.0012 + kx*9.0)*1.2;               // fine breathing jitter
         const up = Math.max(0, 0.62 - ky);
-        kxp += swayX*(0.4 + up) + leanX*up*1.8;
+        kxp += leanX*up*1.8;
         kyp += leanY*up*1.6;
       }
       KS[nm] = [kxp, kyp];
     }
-    for(let b=0;b<BONES.length;b++){
-      const A = KS[BONES[b][0]], C = KS[BONES[b][1]];
-      const bdx = C[0]-A[0], bdy = C[1]-A[1];
-      const blen = Math.hypot(bdx,bdy)||1;
-      const pnx = -bdy/blen, pny = bdx/blen;            // perpendicular unit
-      const thPx = BONES[b][2]*fig.scale;               // limb half-width in px
-      // TONAL CONTRAST (濃淡): thick masses (torso) draw darker, thin limbs lighter — like the original
-      const tone = 0.55 + Math.max(0, Math.min(1, (BONES[b][2]-0.03)/0.07))*0.95;
-      // dense field of FINE tangled threads filling the limb volume (mantis "scribbled wireframe" texture)
-      const threads = Math.max(8, Math.round((blen*0.24 + thPx*1.8) * (W<760?0.55:1)));
-      const SEG = 12, cap = thPx*1.12;                  // more segments -> smooth, clean flowing lines
-      ctx.lineWidth = 0.5;
-      for(let s=0;s<threads;s++){
-        const sd = b*97.3 + s*13.7;
-        const t0 = srand(sd)*0.34;                      // longer threads -> clean flowing lines, not scratchy
-        let t1 = t0 + 0.5 + srand(sd*1.4)*0.45; if(t1>1) t1 = 1;
-        const o0 = (srand(sd*1.7)*2-1)*thPx*0.8;        // start across the limb
-        const drift = (srand(sd*2.9)*2-1)*thPx*0.28;    // gentle cross-drift
-        const freq = 0.5 + srand(sd*3.1)*1.1;           // a single gentle arc (was 3-8 = scratchy)
-        const phase = srand(sd*5.3)*Math.PI*2;
-        // core threads darker, edge threads lighter -> depth/shading within each mass (濃淡)
-        const al = (0.05 + srand(sd*2.3)*0.085) * tone * (1.18 - Math.abs(o0)/thPx*0.45);
-        ctx.strokeStyle = 'rgba(11,11,11,'+al.toFixed(3)+')';
-        ctx.beginPath();
-        for(let k=0;k<=SEG;k++){
-          const f = k/SEG;
-          const along = t0 + (t1-t0)*f;
-          let o = o0 + drift*f + Math.sin(f*Math.PI*freq + phase)*thPx*0.4; // smooth bow
-          o = o<-cap?-cap:(o>cap?cap:o);
-          const px = A[0] + bdx*along + pnx*o;
-          const py = A[1] + bdy*along + pny*o;
-          if(k===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
-        }
-        ctx.stroke();
-      }
+
+    // draw the wire-wound figure; pointer agitation shakes the wires locally, then settles
+    const fx = (!REDUCED && figEnergy > 0.015) ? { x: mouseEase.x, y: mouseEase.y, a: figEnergy } : null;
+    const polys = figureWires(KS, fig.scale, W < 760, fx);
+    for(let i=0; i<polys.length; i++){
+      const q = polys[i], P = q.p;
+      ctx.strokeStyle = 'rgba(11,11,11,' + q.a.toFixed(3) + ')';
+      ctx.lineWidth = q.w;
+      ctx.beginPath();
+      ctx.moveTo(P[0][0], P[0][1]);
+      for(let k=1; k<P.length; k++) ctx.lineTo(P[k][0], P[k][1]);
+      ctx.stroke();
     }
 
-    // (no hard outline — the dense fine threads alone define the silhouette, as in the mantis original)
-
-    // HEAD — egg/oval (chin taper + slight tilt) rendered in the SAME fine-thread texture as the body
-    { const h = KS.head, hr = 0.072*fig.scale;
-      const tilt = -0.16, ct = Math.cos(tilt), st = Math.sin(tilt);
-      const eggRx = (a)=> hr*0.74*(1 - Math.max(0, Math.sin(a))*0.32);  // taper lower half -> chin
-      const place = (ex,ey)=> [ h[0] + ex*ct - ey*st, h[1] + ex*st + ey*ct ];
-      ctx.lineWidth = 0.5;
-      for(let pass=0; pass<2; pass++){                 // faint outline (2 light passes)
-        ctx.strokeStyle = 'rgba(11,11,11,'+(0.05 + srand(pass*9.3)*0.05).toFixed(3)+')';
-        ctx.beginPath();
-        const N = 32;
-        for(let k=0;k<=N;k++){
-          const a = k/N*Math.PI*2, jit = (srand(pass*13.1 + k*2.7)-0.5)*hr*0.06;
-          const [px,py] = place(Math.cos(a)*(eggRx(a)+jit), Math.sin(a)*(hr+jit));
-          if(k===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
-        }
-        ctx.stroke();
-      }
-      const HN = (W<760 ? 44 : 78);                    // fine tangled threads filling the egg
-      for(let i=0;i<HN;i++){
-        const sd = i*7.7;
-        const a = srand(sd)*Math.PI*2, rad = Math.sqrt(srand(sd*1.3));
-        let [x,y] = place(Math.cos(a)*eggRx(a)*rad, Math.sin(a)*hr*rad);
-        ctx.strokeStyle = 'rgba(11,11,11,'+(0.045 + srand(sd*2.1)*0.06).toFixed(3)+')';
-        ctx.beginPath(); ctx.moveTo(x,y);
-        let ang = srand(sd*3.3)*Math.PI*2; const SEG = 5, len = hr*0.42;
-        for(let k=0;k<SEG;k++){
-          ang += (srand(sd + k*4.1)-0.5)*1.5;
-          x += Math.cos(ang)*len/SEG; y += Math.sin(ang)*len/SEG;
-          ctx.lineTo(x,y);
-        }
-        ctx.stroke();
-      }
-    }
+    // PARK the loop when everything is at rest — no perpetual animation, no idle CPU
+    const active = !REDUCED && figVisible &&
+      ( easing || figEnergy > 0.015 || (performance.now() - lastScrollT) < 300 );
+    rafId = active ? requestAnimationFrame(renderFrame) : null;
   }
 
   function startRAF(){
@@ -1197,10 +1226,17 @@
   }
   function stopRAF(){ if(rafId!==null){ cancelAnimationFrame(rafId); rafId=null; } }
 
+  // input arrives -> optionally add agitation energy and (re)start the on-demand loop
+  function figWake(e){
+    if(REDUCED) return;
+    if(e) figEnergy = Math.min(1, figEnergy + e);
+    if(rafId===null && figVisible){ lastDraw = 0; rafId = requestAnimationFrame(renderFrame); }
+  }
+
   // suspend the figure loop while the tab is hidden (saves CPU/battery)
   document.addEventListener('visibilitychange', ()=>{
     if(document.hidden){ figVisible=false; stopRAF(); }
-    else if(!REDUCED){ figVisible=true; lastDraw=0; startRAF(); }
+    else if(!REDUCED){ figVisible=true; figWake(0.05); }
   });
 
   function init(){
@@ -1214,14 +1250,14 @@
   let rzT=null;
   window.addEventListener('resize', ()=>{
     clearTimeout(rzT);
-    rzT = setTimeout(()=>{ layout(); if(REDUCED) renderFrame(0); }, 160);
+    rzT = setTimeout(()=>{ layout(); if(REDUCED) renderFrame(0); else figWake(0.05); }, 160);
   });
 
   if(!REDUCED){ // cursor reactivity across the WHOLE page (canvas is a fixed full-viewport layer)
-    window.addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true; });
+    window.addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true; figWake(0.16); });
     document.addEventListener('mouseleave', ()=>{ mouse.active = false; });
     window.addEventListener('touchmove', e=>{
-      const tt = e.touches[0]; if(tt){ mouse.x = tt.clientX; mouse.y = tt.clientY; mouse.active = true; }
+      const tt = e.touches[0]; if(tt){ mouse.x = tt.clientX; mouse.y = tt.clientY; mouse.active = true; figWake(0.16); }
     }, {passive:true});
     window.addEventListener('touchend', ()=>{ mouse.active = false; }, {passive:true});
   }
@@ -1250,7 +1286,7 @@
       for(const p of parEls){ p.el.style.transform = 'translateY(' + ((p.center - vc)*p.speed).toFixed(1) + 'px)'; }
       scT = null;
     };
-    window.addEventListener('scroll', ()=>{ if(scT===null) scT = requestAnimationFrame(onScroll); }, {passive:true});
+    window.addEventListener('scroll', ()=>{ lastScrollT = performance.now(); figWake(); if(scT===null) scT = requestAnimationFrame(onScroll); }, {passive:true});
     let rzP = null;
     window.addEventListener('resize', ()=>{ clearTimeout(rzP); rzP = setTimeout(()=>{ measurePar(); onScroll(); }, 180); });
     window.addEventListener('load', ()=>{ measurePar(); onScroll(); });
@@ -1515,10 +1551,10 @@
   }
 
   /* =========================================================
-     13. KEYWORD MARQUEE — decorative, 3D-tilted rows (mantis .brands_rows).
-     Pure CSS @keyframes drive the loop (and are gated off under reduced-motion
-     via the media query around .kwtrack's animation); JS only builds nodes
-     from the literal KEYWORDS array via textContent — no HTML parsing.
+     13. KEYWORD ROWS — decorative, 3D-tilted (mantis .brands_rows).
+     SCROLL-DRIVEN, not a perpetual marquee: JS slides the duplicated
+     tracks from scrollY (opposite directions); static under
+     reduced-motion. Nodes are built via textContent only.
      ========================================================= */
   const KEYWORDS = ['ガマンダッシュ','トイレダッシュ','ガマンゲージ','片手アクション','限界ガマニスト','全力疾走','あと3秒'];
   function fillTrack(id, words){
@@ -1540,6 +1576,25 @@
   }
   fillTrack('kwA', KEYWORDS);
   fillTrack('kwB', [...KEYWORDS].reverse());
+
+  // scroll-driven drift — tracks are duplicated, so a half-width modulo loops seamlessly
+  if(!REDUCED){
+    const kwAEl = document.getElementById('kwA'), kwBEl = document.getElementById('kwB');
+    let halfA = 0, halfB = 0, kwT = null, kwRz = null;
+    const measure = ()=>{ if(kwAEl) halfA = kwAEl.scrollWidth/2; if(kwBEl) halfB = kwBEl.scrollWidth/2; };
+    const scrub = ()=>{
+      kwT = null;
+      if(!halfA || !halfB) return;
+      const sy = window.scrollY || 0;
+      const a = ((sy*0.45) % halfA + halfA) % halfA;
+      const b = ((sy*0.36) % halfB + halfB) % halfB;
+      kwAEl.style.transform = 'translateX(' + (-a).toFixed(1) + 'px)';
+      kwBEl.style.transform = 'translateX(' + (b - halfB).toFixed(1) + 'px)';
+    };
+    window.addEventListener('scroll', ()=>{ if(kwT===null) kwT = requestAnimationFrame(scrub); }, {passive:true});
+    window.addEventListener('resize', ()=>{ clearTimeout(kwRz); kwRz = setTimeout(()=>{ measure(); scrub(); }, 200); });
+    measure(); scrub();
+  }
 
 })();
 </script>
