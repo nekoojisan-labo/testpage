@@ -1046,15 +1046,17 @@
 
     // CHAINS: joint paths a single stroke can travel end-to-end — [joint, radius] pairs.
     // Weights skew coverage to torso + the featured raised arm (like the original).
+    // density follows the original: HEAD + CHEST/TORSO are woven from many fine threads,
+    // the legs stay sparse (just a few wandering lines)
     const CHAINS = [
-      { w: 3,   path: [['handL',0.016],['elbowL',0.032],['shoulderL',0.048],['neck',0.05],['spineMid',0.075]] },
-      { w: 2,   path: [['handR',0.02],['elbowR',0.032],['shoulderR',0.048],['neck',0.05]] },
-      { w: 4,   path: [['crown',0.03],['head',0.056],['neck',0.045],['spineMid',0.075],['belly',0.068],['pelvis',0.072]] },
-      { w: 2,   path: [['shoulderL',0.044],['neck',0.05],['shoulderR',0.044],['spineMid',0.07]] },
-      { w: 2,   path: [['footL',0.024],['kneeL',0.04],['hipL',0.048],['pelvis',0.07],['spineMid',0.078]] },
-      { w: 2,   path: [['footR',0.024],['kneeR',0.04],['hipR',0.048],['pelvis',0.07]] },
-      { w: 1.5, path: [['handR',0.02],['belly',0.06],['pelvis',0.07]] },
-      { w: 1,   path: [['crown',0.028],['head',0.058],['neck',0.04]] }
+      { w: 3.5, path: [['handL',0.016],['elbowL',0.032],['shoulderL',0.048],['neck',0.05],['spineMid',0.075]] },
+      { w: 2.5, path: [['handR',0.02],['elbowR',0.032],['shoulderR',0.048],['neck',0.05]] },
+      { w: 6,   path: [['crown',0.03],['head',0.056],['neck',0.045],['spineMid',0.075],['belly',0.068],['pelvis',0.072]] },
+      { w: 3,   path: [['shoulderL',0.044],['neck',0.05],['shoulderR',0.044],['spineMid',0.07]] },
+      { w: 1.2, path: [['footL',0.024],['kneeL',0.04],['hipL',0.048],['pelvis',0.07],['spineMid',0.078]] },
+      { w: 1.2, path: [['footR',0.024],['kneeR',0.04],['hipR',0.048],['pelvis',0.07]] },
+      { w: 2,   path: [['handR',0.02],['belly',0.06],['pelvis',0.07]] },
+      { w: 2.5, path: [['crown',0.028],['head',0.058],['neck',0.04]] }
     ];
     const totW = CHAINS.reduce((s,c)=>s+c.w, 0);
 
@@ -1100,13 +1102,13 @@
       }
       // strong weight contrast like the original: bold accents / hairlines / faint ghosts
       const cls = S(sd0*6.1);
-      const bold = cls > 0.92, faint = cls < 0.3;
+      const bold = cls > 0.94, faint = cls < 0.32;
       out.push({ p: pts,
-                 a: bold ? 0.5 + S(sd0*8.3)*0.2 : (faint ? 0.08 + S(sd0*8.3)*0.07 : 0.16 + S(sd0*8.3)*0.16),
+                 a: bold ? 0.5 + S(sd0*8.3)*0.2 : (faint ? 0.07 + S(sd0*8.3)*0.06 : 0.12 + S(sd0*8.3)*0.12),
                  w: bold ? 1.3 + S(sd0*9.7)*0.8 : 0.5 });
     }
 
-    const STROKES = Math.round(74 * dens);
+    const STROKES = Math.round(150 * dens);   // many fine threads (original-level weave density)
     for(let i=0; i<STROKES; i++) wire(i*17.3 + 3);
 
     // FEATURED HAND — dense angular knots over palm + five splayed fingers (focal mass)
