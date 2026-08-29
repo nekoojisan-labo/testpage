@@ -138,6 +138,12 @@ function ConvertTo-SafeName {
 #           ＝過去に同じ内容を連番名で保存済みだった場合の再実行にも対応する）
 #     - 同名のファイルが存在しない               → 渡された名前をそのまま返す
 #
+#   [レビュー反映・軽微3] スキップ（$null）の場合、実際に一致した既存ファイル名
+#   （ベース名のこともあれば "name (2).ext" 等の連番名のこともある）を
+#   呼び出し側へ伝えるための任意の [ref]$MatchedName パラメータを追加した。
+#   スキップ以外（そのまま／連番で新規保存）のときは $MatchedName は変更しない。
+#   省略可能なので、既存の呼び出し（このパラメータを渡さない）は影響を受けない。
+#
 #   $Folder はテスト時には一時ディレクトリを渡す想定。実フォルダを見る実装。
 # ------------------------------------------------------------
 function Get-SaveFileName {
@@ -153,7 +159,10 @@ function Get-SaveFileName {
         [long]$ActualSize,
 
         [Parameter(Mandatory = $true)]
-        [string]$ActualHash
+        [string]$ActualHash,
+
+        [Parameter(Mandatory = $false)]
+        [ref]$MatchedName
     )
 
     function Test-SameExistingFile {
@@ -169,6 +178,7 @@ function Get-SaveFileName {
         return $FileName
     }
     if (Test-SameExistingFile -Path $fullPath) {
+        if ($PSBoundParameters.ContainsKey('MatchedName')) { $MatchedName.Value = $FileName }
         return $null
     }
 
@@ -191,6 +201,7 @@ function Get-SaveFileName {
             return $candidateName
         }
         if (Test-SameExistingFile -Path $candidatePath) {
+            if ($PSBoundParameters.ContainsKey('MatchedName')) { $MatchedName.Value = $candidateName }
             return $null
         }
 
@@ -488,9 +499,10 @@ function Save-AttachmentToTarget {
         }
 
         return [PSCustomObject]@{
-            Action    = if ($approxSkip) { "SkipEstimate" } else { "SaveEstimate" }
-            SavedPath = $null
-            Truncated = $false
+            Action      = if ($approxSkip) { "SkipEstimate" } else { "SaveEstimate" }
+            SavedPath   = $null
+            Truncated   = $false
+            MatchedName = $null
         }
     }
 
@@ -506,14 +518,18 @@ function Save-AttachmentToTarget {
     $actualSize = (Get-Item -LiteralPath $tmpPath).Length
     $actualHash = (Get-FileHash -LiteralPath $tmpPath -Algorithm MD5).Hash
 
-    $saveName = Get-SaveFileName -Folder $TargetFolder -FileName $SafeFileName -ActualSize $actualSize -ActualHash $actualHash
+    # [レビュー反映・軽微3] 実際に一致した既存ファイル名（連番側のこともある）を
+    # ログ表示できるよう -MatchedName で受け取る。
+    $matchedNameRef = [ref]$null
+    $saveName = Get-SaveFileName -Folder $TargetFolder -FileName $SafeFileName -ActualSize $actualSize -ActualHash $actualHash -MatchedName $matchedNameRef
 
     if ($null -eq $saveName) {
         Remove-Item -LiteralPath $tmpPath -Force -ErrorAction SilentlyContinue
         return [PSCustomObject]@{
-            Action    = "Skip"
-            SavedPath = $null
-            Truncated = $false
+            Action      = "Skip"
+            SavedPath   = $null
+            Truncated   = $false
+            MatchedName = $matchedNameRef.Value
         }
     }
 
@@ -528,8 +544,95 @@ function Save-AttachmentToTarget {
     }
 
     return [PSCustomObject]@{
-        Action    = "Saved"
-        SavedPath = $limited.Path
-        Truncated = $limited.Truncated
+        Action      = "Saved"
+        SavedPath   = $limited.Path
+        Truncated   = $limited.Truncated
+        MatchedName = $null
+    }
+}
+
+# ------------------------------------------------------------
+# [レビュー反映・バグ1] Show-SaveNotification
+#   保存完了ポップアップの「出すか出さないか・何を表示するか」という判定ロジックを
+#   ここに切り出し、実際にポップアップを表示する処理（Outlook非依存にできない
+#   WScript.Shell COM呼び出し）は -ShowPopup スクリプトブロックとして注入させる。
+#   これにより判定ロジック自体はOutlook無しでテストでき、ShowPopup側はテストで
+#   モック（記録するだけの偽物）に差し替えられる。
+#
+#   診断の経緯: 実機リハーサルで「保存4件・フォルダ2件があったのにポップアップが
+#   出た形跡がなく、ログにも通知関連の行が一切ない」という事象が報告された。
+#   本体側のコードを変数レベルで追跡した限り、$DryRun/$EnableNotification/
+#   $savedFileCount の条件分岐そのものにはバグが見当たらず、この開発機で
+#   （Outlook・Z:・タスク登録には触れない範囲で）WScript.Shell.Popup単体の
+#   動作を実測したところ、-WindowStyle Hidden で起動した子プロセスからでも
+#   Popupは実際に可視ウィンドウを生成し、閉じられるまで正しくブロックすることを
+#   確認した（=Popup自体が機能しない、という仮説は再現しなかった）。
+#   一方で、当時のコードは「ポップアップ表示を試みた」ことを示すログを一切
+#   出していなかったため、以下のいずれが起きたのかをログから区別する手段が
+#   無かった: (a)このコード自体に到達していない (b)到達しPopupが呼ばれたが
+#   まだ閉じられておらずブロック中（前面に出ず見落とされた可能性を含む）
+#   (c)呼び出しは失敗したがその失敗ログ自体の書き込みが別の理由で失敗した。
+#   この「区別できない」こと自体が実質的な欠陥だったため、表示直前ログの追加
+#   （呼び出し元のSave-MailAttachments.ps1側で行う）と、見落とされにくくする
+#   ための表示方法の見直し（システムモーダル化。呼び出し元で実施）をセットで
+#   行うこととした。
+#
+#   戻り値: PSCustomObject @{ Action = <string>; Message = <string|$null>; Error = <string|$null> }
+#     Action: "Shown"（表示を試みた=ShowPopupを呼んだ) | "Failed"（ShowPopupが例外を投げた) |
+#             "Skipped"（DryRun／$EnableNotification=$false／保存0件のいずれかで非表示）
+# ------------------------------------------------------------
+function Show-SaveNotification {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$SavedFileCount,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string[]]$TouchedFolders,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$EnableNotification,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$ShowPopup,
+
+        [switch]$DryRun
+    )
+
+    if ($null -eq $TouchedFolders) { $TouchedFolders = @() }
+
+    if ($DryRun -or -not $EnableNotification -or $SavedFileCount -le 0) {
+        return [PSCustomObject]@{
+            Action  = "Skipped"
+            Message = $null
+            Error   = $null
+        }
+    }
+
+    $folderLines = @($TouchedFolders)
+    if ($folderLines.Count -gt 6) {
+        $shown = @($folderLines | Select-Object -First 5)
+        $shown += ("他 {0} 件" -f ($folderLines.Count - 5))
+        $folderLines = $shown
+    }
+
+    $msg = "添付ファイルを {0} 件保存しました。`r`n`r`n" -f $SavedFileCount
+    $msg += ($folderLines -join "`r`n")
+
+    try {
+        & $ShowPopup $msg
+        return [PSCustomObject]@{
+            Action  = "Shown"
+            Message = $msg
+            Error   = $null
+        }
+    }
+    catch {
+        return [PSCustomObject]@{
+            Action  = "Failed"
+            Message = $msg
+            Error   = $_.Exception.Message
+        }
     }
 }

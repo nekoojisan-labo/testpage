@@ -18,6 +18,8 @@
 
 .PARAMETER Backfill
     1回あたりの処理件数上限（$MaxMailsPerRun）を無視し、対象メールを全件処理する。
+    [レビュー反映] この上限は「件名がコードに一致し、かつ保存対象の添付がある候補」に
+    のみ適用される（コード不一致・添付なしのメールは上限に関係なく毎回評価される）。
     導入初回のみ使用する想定。
 
 .NOTES
@@ -174,8 +176,8 @@ try {
             }
         }
 
-        # COMアイテムを軽量なPSCustomObjectに落とし込み、純粋関数へ渡せる形にする
-        $mailInfos = New-Object System.Collections.Generic.List[object]
+        # COMアイテムを辞書に落とし込む（このあとの評価フェーズで使う）
+        $allUnprocessedCount = 0
 
         foreach ($item in $restrictedItems) {
             try {
@@ -183,10 +185,7 @@ try {
                 $entryId = $item.EntryID
                 if ($processedIds.Contains($entryId)) { continue }
 
-                $mailInfos.Add([PSCustomObject]@{
-                    EntryID      = $entryId
-                    ReceivedTime = $item.ReceivedTime
-                })
+                $allUnprocessedCount++
                 $comItemsByEntryId[$entryId] = $item
             }
             catch {
@@ -194,42 +193,37 @@ try {
             }
         }
 
-        $selection = Select-MailsToProcess -MailInfos $mailInfos.ToArray() -Max $MaxMailsPerRun -Backfill:$Backfill
-
-        Write-Log ("対象メール: {0} 件（未処理・期間内合計 {1} 件中）" -f $selection.Selected.Count, $mailInfos.Count)
-        if ($selection.Remaining -gt 0) {
-            Write-Log ("上限超過: 残り {0} 件は次回実行で処理します（-Backfill 指定で今回まとめて処理可）。" -f $selection.Remaining)
-        }
-
-        # DryRun集計用
-        $dryPlannedFolders = New-Object System.Collections.Generic.HashSet[string]
-        $dryPlannedFiles = 0
-        $drySkipEstimate = 0
-
-        # 通知用集計
-        $savedFileCount = 0
-        $touchedFolders = New-Object System.Collections.Generic.List[string]
-
         # ============================================================
-        # 5. メールごとの処理（1通単位でtry/catch。失敗はログに残して継続、
-        #    processed-idsには書かない＝次回自動リトライ）
+        # 5. [レビュー反映・バグ2] 候補の評価（全件・上限なし）
+        #    実機リハーサルで、上限 $MaxMailsPerRun が「受信トレイの未処理メール全体」に
+        #    先に効いてしまい、新しく届いたコード一致メールが（より多数の）コード不一致の
+        #    古いメールに上限を先食いされて後回しになる問題が判明した。
+        #    そこで上限は「コード一致かつ保存対象添付あり」という保存作業の候補にのみ
+        #    適用するよう変更する。コード不一致・添付なしのメールは保存作業を伴わない
+        #    （＝上限を消費する理由が無い）ため、上限に関係なくその場で処理済みとして
+        #    記録してよい。この評価（件名照合・添付列挙）自体は実測1〜3秒/100通と安価。
         # ============================================================
-        foreach ($info in $selection.Selected) {
-            $mailItem = $comItemsByEntryId[$info.EntryID]
+        $candidates = New-Object System.Collections.Generic.List[object]
+        $nonCandidateCount = 0
+
+        foreach ($entryId in @($comItemsByEntryId.Keys)) {
+            $mailItem = $comItemsByEntryId[$entryId]
             $subjectForLog = ""
 
             try {
                 $subject = $mailItem.Subject
                 $subjectForLog = $subject
+                $receivedTime = $mailItem.ReceivedTime
 
                 $codeResult = Get-CodeFromSubject -Subject $subject -Patterns $SubjectPatterns
                 if ($codeResult.MultipleFound) {
-                    Write-Log ("複数コード検出（先頭を採用）: EntryID={0} 件名=[{1}] 採用コード={2}" -f $info.EntryID, $subject, $codeResult.Code)
+                    Write-Log ("複数コード検出（先頭を採用）: EntryID={0} 件名=[{1}] 採用コード={2}" -f $entryId, $subject, $codeResult.Code)
                 }
 
                 if ($null -eq $codeResult.Code) {
-                    # 検知対象外の件名。エラーではないため処理済みとして記録し、以後スキャン対象から外す。
-                    [void](Add-ProcessedId -Path $ProcessedIdsPath -EntryId $info.EntryID -DryRun:$DryRun)
+                    # コード不一致＝保存作業を伴わない。上限を消費せずその場で処理済み記録する。
+                    [void](Add-ProcessedId -Path $ProcessedIdsPath -EntryId $entryId -DryRun:$DryRun)
+                    $nonCandidateCount++
                     continue
                 }
 
@@ -261,12 +255,54 @@ try {
                 }
 
                 if ($targetAttachments.Count -eq 0) {
-                    # 保存対象の添付が無いメールはフォルダも作らない（仕様4）
-                    [void](Add-ProcessedId -Path $ProcessedIdsPath -EntryId $info.EntryID -DryRun:$DryRun)
+                    # 添付なし＝保存作業を伴わない。上限を消費せずその場で処理済み記録する（仕様4）。
+                    [void](Add-ProcessedId -Path $ProcessedIdsPath -EntryId $entryId -DryRun:$DryRun)
+                    $nonCandidateCount++
                     continue
                 }
 
-                $folderName = ConvertTo-SafeName -Name ($codeResult.Code + "_")
+                # ここまで残ったものだけが「保存作業の候補」＝上限の適用対象
+                $candidates.Add([PSCustomObject]@{
+                    EntryID           = $entryId
+                    ReceivedTime      = $receivedTime
+                    Code              = $codeResult.Code
+                    TargetAttachments = $targetAttachments
+                    Subject           = $subject
+                })
+            }
+            catch {
+                Write-Log ("メール評価中にエラー（該当メールをスキップ・次回リトライ）: EntryID={0} 件名=[{1}] {2}" -f $entryId, $subjectForLog, $_.Exception.Message)
+            }
+        }
+
+        # ============================================================
+        # 6. [レビュー反映・バグ2] 上限の適用（候補のみに対して）
+        # ============================================================
+        $selection = Select-MailsToProcess -MailInfos $candidates.ToArray() -Max $MaxMailsPerRun -Backfill:$Backfill
+
+        Write-Log ("候補メール（コード一致かつ添付あり）: {0} 件（未処理合計 {1} 件中・コード不一致/添付なしで {2} 件を即記録）" -f `
+            $candidates.Count, $allUnprocessedCount, $nonCandidateCount)
+        Write-Log ("今回処理: {0} 件・残り: {1} 件" -f $selection.Selected.Count, $selection.Remaining)
+        if ($selection.Remaining -gt 0) {
+            Write-Log ("上限超過: 残り {0} 件は次回実行で処理します（-Backfill 指定で今回まとめて処理可）。" -f $selection.Remaining)
+        }
+
+        # DryRun集計用
+        $dryPlannedFolders = New-Object System.Collections.Generic.HashSet[string]
+        $dryPlannedFiles = 0
+        $drySkipEstimate = 0
+
+        # 通知用集計
+        $savedFileCount = 0
+        $touchedFolders = New-Object System.Collections.Generic.List[string]
+
+        # ============================================================
+        # 7. 候補ごとの保存処理（1通単位でtry/catch。失敗はログに残して継続、
+        #    processed-idsには書かない＝次回自動リトライ）
+        # ============================================================
+        foreach ($candidate in $selection.Selected) {
+            try {
+                $folderName = ConvertTo-SafeName -Name ($candidate.Code + "_")
                 $targetDir = Join-Path $SaveRoot $folderName
 
                 # [レビュー反映・修正3] フォルダ作成はMailAttachLib.ps1のInitialize-TargetFolderに集約。
@@ -281,7 +317,7 @@ try {
 
                 $savedAnyForThisMail = $false
 
-                foreach ($att in $targetAttachments) {
+                foreach ($att in $candidate.TargetAttachments) {
                     $originalName = $att.FileName
                     $safeName = ConvertTo-SafeName -Name $originalName
                     $estimatedSize = [long]$att.Size
@@ -308,7 +344,9 @@ try {
                     }
 
                     if ($result.Action -eq "Skip") {
-                        Write-Log ("スキップ（保存済み・実サイズ/ハッシュ一致）: {0}\{1}" -f $folderName, $safeName)
+                        # [レビュー反映・軽微3] $safeName（ベース名）ではなく、実際に一致した
+                        # ファイル名（連番側のこともある）$result.MatchedName を表示する。
+                        Write-Log ("スキップ（保存済み・実サイズ/ハッシュ一致）: {0}\{1}" -f $folderName, $result.MatchedName)
                         continue
                     }
 
@@ -326,20 +364,22 @@ try {
 
                 # メール本体には一切書き込まない（UnRead代入禁止・Save()禁止・移動削除禁止）。
                 # 添付の保存が完了した（=このメールの評価が正常に終わった）ので処理済みとして記録する。
-                [void](Add-ProcessedId -Path $ProcessedIdsPath -EntryId $info.EntryID -DryRun:$DryRun)
+                [void](Add-ProcessedId -Path $ProcessedIdsPath -EntryId $candidate.EntryID -DryRun:$DryRun)
             }
             catch {
-                Write-Log ("エラー: EntryID={0} 件名=[{1}] {2}" -f $info.EntryID, $subjectForLog, $_.Exception.Message)
+                Write-Log ("エラー: EntryID={0} 件名=[{1}] {2}" -f $candidate.EntryID, $candidate.Subject, $_.Exception.Message)
             }
         }
 
         # ============================================================
-        # 6. DryRun集計の出力
+        # 8. DryRun集計の出力
+        #    [レビュー反映・バグ2] 「一致n件のうち、今回m件・残りk件」が分かる表示にする。
         # ============================================================
         if ($DryRun) {
             $summaryLines = @(
                 "----- DryRun 集計 -----",
-                ("対象メール数: {0} 件" -f $selection.Selected.Count),
+                ("対象メール（コード一致かつ添付あり）: {0} 件（今回処理: {1} 件・残り: {2} 件）" -f `
+                    $candidates.Count, $selection.Selected.Count, $selection.Remaining),
                 ("作成予定フォルダ: {0} 件" -f $dryPlannedFolders.Count),
                 ("保存予定ファイル数: {0} 件" -f $dryPlannedFiles),
                 ("スキップ見込み（保存済みと思われる件数）: {0} 件" -f $drySkipEstimate),
@@ -359,25 +399,37 @@ try {
         }
 
         # ============================================================
-        # 7. 通知（1件以上保存した実行のみ・DryRunでは出さない・設定でOFF可）
+        # 9. 通知（1件以上保存した実行のみ・DryRunでは出さない・設定でOFF可）
+        #
+        #    [レビュー反映・バグ1] 診断の経緯: 実機リハーサルで「保存4件・フォルダ2件が
+        #    あったのにポップアップが出た形跡がなく、ログにも通知関連の行が一切なかった」
+        #    という報告を受け、$DryRun/$EnableNotification/$savedFileCount の分岐を
+        #    変数レベルで追跡したが論理的な誤りは見当たらなかった。次に、この開発機で
+        #    （Outlook・Z:・タスク登録には触れない範囲で）WScript.Shell.Popup単体を
+        #    -WindowStyle Hidden の子プロセスから呼ぶ実験を行い、Popupは実際に可視の
+        #    トップレベルウィンドウを生成し、閉じられるまで正しくブロックすることを
+        #    実測で確認した（＝hidden起動でPopup自体が機能しない、という仮説は再現しなかった）。
+        #    一方で当時のコードには「表示を試みた」ことを示すログが一切無く、
+        #    (a)このコードに到達していない (b)到達しPopupは呼ばれたがまだ閉じられて
+        #    おらずブロック中（前面に出ず見落とされた可能性を含む）(c)失敗はしたが
+        #    その失敗ログ自体の書き込みが別要因で失敗した、のいずれであるかをログから
+        #    区別する手段が無かった。この「区別できないこと」自体が実質的な欠陥のため、
+        #    判定ロジックをMailAttachLib.ps1のShow-SaveNotificationへ切り出してテスト可能にし
+        #    （実際の表示はモック可能なスクリプトブロックとして注入）、
+        #    表示直前ログの追加と、見落とし防止のためのシステムモーダル化をセットで行う。
         # ============================================================
-        if (-not $DryRun -and $EnableNotification -and $savedFileCount -gt 0) {
-            $folderLines = $touchedFolders
-            if ($touchedFolders.Count -gt 6) {
-                $folderLines = @($touchedFolders | Select-Object -First 5)
-                $folderLines += ("他 {0} 件" -f ($touchedFolders.Count - 5))
-            }
-
-            $msg = "添付ファイルを {0} 件保存しました。`r`n`r`n" -f $savedFileCount
-            $msg += ($folderLines -join "`r`n")
-
-            try {
+        $notifyResult = Show-SaveNotification -SavedFileCount $savedFileCount -TouchedFolders @($touchedFolders) `
+            -EnableNotification ([bool]$EnableNotification) -DryRun:$DryRun -ShowPopup {
+                param($popupMessage)
+                Write-Log ("通知表示: 保存 {0} 件" -f $savedFileCount)
                 $shell = New-Object -ComObject WScript.Shell
-                [void]$shell.Popup($msg, 0, "メール添付保存", 64)
+                # 64=vbInformation, 4096=vbSystemModal を加算(4160)。システムモーダルにすることで
+                # 他アプリの背後に隠れて見落とされる事故を防ぐ（timeout=0=手動で閉じるまで残る仕様は維持）。
+                [void]$shell.Popup($popupMessage, 0, "メール添付保存", 4160)
             }
-            catch {
-                Write-Log ("通知ポップアップの表示に失敗しました: {0}" -f $_.Exception.Message)
-            }
+
+        if ($notifyResult.Action -eq "Failed") {
+            Write-Log ("通知ポップアップの表示に失敗しました: {0}" -f $notifyResult.Error)
         }
 
         Write-Log ("===== 実行終了 (保存 {0} 件・フォルダ {1} 件) =====" -f $savedFileCount, $touchedFolders.Count)

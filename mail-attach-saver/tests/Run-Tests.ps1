@@ -129,13 +129,16 @@ try {
     $saveDir = Join-Path $testRoot "savefile"
     New-Item -ItemType Directory -Path $saveDir -Force | Out-Null
 
-    # 分岐A: 同名・同実サイズ・同ハッシュ → スキップ($null)
+    # 分岐A: 同名・同実サイズ・同ハッシュ → スキップ($null)。[レビュー反映・軽微3]
+    # -MatchedName で実際に一致したファイル名（この場合はベース名そのもの）も検証する。
     $xPath = Join-Path $saveDir "x.pdf"
     Set-Content -LiteralPath $xPath -Value ("A" * 100) -NoNewline -Encoding Ascii
     $sizeA = (Get-Item -LiteralPath $xPath).Length
     $hashA = (Get-FileHash -LiteralPath $xPath -Algorithm MD5).Hash
-    $name = Get-SaveFileName -Folder $saveDir -FileName "x.pdf" -ActualSize $sizeA -ActualHash $hashA
+    $matchedRefA = [ref]$null
+    $name = Get-SaveFileName -Folder $saveDir -FileName "x.pdf" -ActualSize $sizeA -ActualHash $hashA -MatchedName $matchedRefA
     Assert-Equal -Name "保存名決定: 同名同実サイズ同ハッシュはスキップ(null)" -Expected $null -Actual $name
+    Assert-Equal -Name "保存名決定: MatchedNameにベース名が入る" -Expected "x.pdf" -Actual $matchedRefA.Value
 
     # 分岐B: 同名・別実サイズ → 連番 (2)（サイズが異なる時点で確定するのでハッシュは不問）
     $name = Get-SaveFileName -Folder $saveDir -FileName "x.pdf" -ActualSize ($sizeA + 999) -ActualHash "unused-because-size-differs"
@@ -171,6 +174,21 @@ try {
     $name = Get-SaveFileName -Folder $saveDir -FileName "z.pdf" -ActualSize $newSize -ActualHash "unused-because-size-differs"
     Assert-Equal -Name "保存名決定: 連番は(3)まで進む" -Expected "z (3).pdf" -Actual $name
 
+    # 分岐F（新規・軽微3の再現テスト）: ベース名(v.pdf)とは別内容だが、連番側(v (2).pdf)と
+    # 実サイズ・ハッシュが一致する場合 → スキップし、MatchedNameには実際に一致した
+    # "v (2).pdf"（連番側）が入ること（ベース名 "v.pdf" ではないこと）を検証する。
+    # これが無いと、ログに「実際に一致したファイル名」でなくベース名が出てしまうバグになる。
+    $vPath = Join-Path $saveDir "v.pdf"
+    $vPath2 = Join-Path $saveDir "v (2).pdf"
+    Set-Content -LiteralPath $vPath -Value "base-content-XYZ" -NoNewline -Encoding Ascii
+    Set-Content -LiteralPath $vPath2 -Value "numbered-content-12345" -NoNewline -Encoding Ascii
+    $sizeV2 = (Get-Item -LiteralPath $vPath2).Length
+    $hashV2 = (Get-FileHash -LiteralPath $vPath2 -Algorithm MD5).Hash
+    $matchedRefF = [ref]$null
+    $name = Get-SaveFileName -Folder $saveDir -FileName "v.pdf" -ActualSize $sizeV2 -ActualHash $hashV2 -MatchedName $matchedRefF
+    Assert-Equal -Name "保存名決定(軽微3): 連番側と一致した場合はスキップ(null)" -Expected $null -Actual $name
+    Assert-Equal -Name "保存名決定(軽微3): MatchedNameはベース名でなく連番側になる" -Expected "v (2).pdf" -Actual $matchedRefF.Value
+
     # ============================================================
     # 4. Limit-PathLength（パス長の切り詰め）
     # ============================================================
@@ -187,7 +205,17 @@ try {
     Assert-True -Name "パス長: 拡張子は保持される" -Condition ($r.Path.EndsWith(".pdf")) -Detail "結果=[$($r.Path)]"
 
     # ============================================================
-    # 5. Select-MailsToProcess（処理件数上限の選別）
+    # 5. Select-MailsToProcess（"候補"に対する処理件数上限の選別）
+    #    [レビュー反映・バグ2] この関数自体のsort+cap実装は変わっていないが、
+    #    実機リハーサルで「上限がコード照合の前に効いてしまい、新しい側にある
+    #    コード一致メールが上限超過側に落ちてDryRun集計が実態と合わない」
+    #    という問題が判明したため、本体(Save-MailAttachments.ps1)側の役割を
+    #    変更した: 上限はもう「受信トレイの全未処理メール」には適用せず、
+    #    「件名がコードに一致し、かつ保存対象の添付がある候補」だけに適用する。
+    #    コード不一致・添付なしのメールは候補にすらならず、上限に関係なく
+    #    即座にprocessed-idsへ記録してよい（走査自体は実測1〜3秒/100通と安価）。
+    #    そのため、このテストの $mailInfos は「（本体側で既に絞り込まれた）候補」を
+    #    模したものとして扱う。
     # ============================================================
     $mailInfos = @()
     $baseDate = Get-Date "2026-01-01"
@@ -195,20 +223,21 @@ try {
         $mailInfos += [PSCustomObject]@{
             EntryID      = "ENTRY-$i"
             ReceivedTime = $baseDate.AddDays($i)
+            Code         = "DJ{0:D5}" -f (10000 + $i)   # 候補である証として、疑似的にコードも持たせておく
         }
     }
     # 入力順をシャッフルし、「日付昇順に並べ替えてから選別する」ことを検証する
     $shuffled = @($mailInfos | Sort-Object { Get-Random })
 
     $sel = Select-MailsToProcess -MailInfos $shuffled -Max 50
-    Assert-Equal -Name "上限選択: 60件中50件を選択" -Expected 50 -Actual $sel.Selected.Count
-    Assert-Equal -Name "上限選択: 残り10件" -Expected 10 -Actual $sel.Remaining
-    Assert-Equal -Name "上限選択: 最古の1件が先頭(日付昇順)" -Expected "ENTRY-0" -Actual $sel.Selected[0].EntryID
-    Assert-Equal -Name "上限選択: 50件目はENTRY-49" -Expected "ENTRY-49" -Actual $sel.Selected[49].EntryID
+    Assert-Equal -Name "候補選択: 60件中50件を選択" -Expected 50 -Actual $sel.Selected.Count
+    Assert-Equal -Name "候補選択: 残り10件" -Expected 10 -Actual $sel.Remaining
+    Assert-Equal -Name "候補選択: 最古の1件が先頭(日付昇順)" -Expected "ENTRY-0" -Actual $sel.Selected[0].EntryID
+    Assert-Equal -Name "候補選択: 50件目はENTRY-49" -Expected "ENTRY-49" -Actual $sel.Selected[49].EntryID
 
     $selBackfill = Select-MailsToProcess -MailInfos $shuffled -Max 50 -Backfill
-    Assert-Equal -Name "上限選択: Backfillで60件全件" -Expected 60 -Actual $selBackfill.Selected.Count
-    Assert-Equal -Name "上限選択: Backfillで残り0件" -Expected 0 -Actual $selBackfill.Remaining
+    Assert-Equal -Name "候補選択: Backfillで60件全件" -Expected 60 -Actual $selBackfill.Selected.Count
+    Assert-Equal -Name "候補選択: Backfillで残り0件" -Expected 0 -Actual $selBackfill.Remaining
 
     # ============================================================
     # 6. Test-InlineAttachment（インライン画像判定）
@@ -316,6 +345,59 @@ try {
     Assert-Equal -Name "添付保存(本実行): 別内容は連番で保存される" -Expected "Saved" -Actual $r3.Action
     Assert-True -Name "添付保存(本実行): 連番ファイル名になっている" -Condition ($r3.SavedPath -like "*report (2).pdf") -Detail "SavedPath=$($r3.SavedPath)"
     Assert-Equal -Name "添付保存(本実行): 最終的に保存先ファイルは2つ" -Expected 2 -Actual (@(Get-ChildItem -LiteralPath $realTargetFolder -Filter "report*.pdf").Count)
+
+    # ============================================================
+    # 9. [レビュー反映・バグ1] Show-SaveNotification（通知の判定ロジック）
+    #    実際のポップアップ表示（WScript.Shell.Popup）はOutlook非依存のこの
+    #    テストでは呼べない/呼ぶべきでないため、-ShowPopup にモックの
+    #    スクリプトブロックを注入し、「呼ばれたか・何回か・どんなメッセージで」を検証する。
+    # ============================================================
+
+    # 抑制条件1: DryRun中は出さない・ShowPopupも呼ばない
+    $mockCallCount = 0
+    $mockShowPopup = { param($m) $script:mockCallCount++ }
+
+    $script:mockCallCount = 0
+    $n1 = Show-SaveNotification -SavedFileCount 3 -TouchedFolders @("DJ11111_") -EnableNotification $true -ShowPopup $mockShowPopup -DryRun
+    Assert-Equal -Name "通知: DryRun中はSkipped" -Expected "Skipped" -Actual $n1.Action
+    Assert-Equal -Name "通知: DryRun中はShowPopupを呼ばない" -Expected 0 -Actual $script:mockCallCount
+
+    # 抑制条件2: $EnableNotification=$false のときは出さない
+    $script:mockCallCount = 0
+    $n2 = Show-SaveNotification -SavedFileCount 3 -TouchedFolders @("DJ11111_") -EnableNotification $false -ShowPopup $mockShowPopup
+    Assert-Equal -Name "通知: EnableNotification=falseはSkipped" -Expected "Skipped" -Actual $n2.Action
+    Assert-Equal -Name "通知: EnableNotification=falseはShowPopupを呼ばない" -Expected 0 -Actual $script:mockCallCount
+
+    # 抑制条件3: 保存0件のときは出さない
+    $script:mockCallCount = 0
+    $n3 = Show-SaveNotification -SavedFileCount 0 -TouchedFolders @() -EnableNotification $true -ShowPopup $mockShowPopup
+    Assert-Equal -Name "通知: 保存0件はSkipped" -Expected "Skipped" -Actual $n3.Action
+    Assert-Equal -Name "通知: 保存0件はShowPopupを呼ばない" -Expected 0 -Actual $script:mockCallCount
+
+    # 通常ケース: 条件を満たせば1回だけ呼ばれ、メッセージに件数とフォルダ名が入る
+    $script:mockCallCount = 0
+    $script:mockLastMessage = $null
+    $mockShowPopupCapture = { param($m) $script:mockCallCount++; $script:mockLastMessage = $m }
+    $n4 = Show-SaveNotification -SavedFileCount 4 -TouchedFolders @("DJ26779_", "BJ12345_") -EnableNotification $true -ShowPopup $mockShowPopupCapture
+    Assert-Equal -Name "通知: 条件を満たせばShown" -Expected "Shown" -Actual $n4.Action
+    Assert-Equal -Name "通知: ShowPopupは1回だけ呼ばれる" -Expected 1 -Actual $script:mockCallCount
+    Assert-True -Name "通知: メッセージに保存件数が入る" -Condition ($script:mockLastMessage -like "*4*") -Detail "msg=[$script:mockLastMessage]"
+    Assert-True -Name "通知: メッセージにフォルダ名が入る(1)" -Condition ($script:mockLastMessage -like "*DJ26779_*") -Detail "msg=[$script:mockLastMessage]"
+    Assert-True -Name "通知: メッセージにフォルダ名が入る(2)" -Condition ($script:mockLastMessage -like "*BJ12345_*") -Detail "msg=[$script:mockLastMessage]"
+
+    # フォルダ6件超は先頭5件+「他n件」に要約される
+    $manyFolders = @(1..8 | ForEach-Object { "CODE{0:D5}_" -f $_ })
+    $script:mockLastMessage = $null
+    $n5 = Show-SaveNotification -SavedFileCount 8 -TouchedFolders $manyFolders -EnableNotification $true -ShowPopup $mockShowPopupCapture
+    Assert-True -Name "通知: 7件超のフォルダは先頭5件を含む" -Condition ($script:mockLastMessage -like "*CODE00001_*" -and $script:mockLastMessage -like "*CODE00005_*") -Detail "msg=[$script:mockLastMessage]"
+    Assert-True -Name "通知: 7件超のフォルダは6件目以降を含まない" -Condition ($script:mockLastMessage -notlike "*CODE00006_*") -Detail "msg=[$script:mockLastMessage]"
+    Assert-True -Name "通知: 7件超のフォルダは「他n件」で要約される" -Condition ($script:mockLastMessage -like "*他 3 件*") -Detail "msg=[$script:mockLastMessage]"
+
+    # ShowPopupが失敗した場合はFailedを返し、例外は外に漏れない
+    $mockShowPopupThrows = { param($m) throw "COM呼び出しが失敗したという想定のテスト例外" }
+    $n6 = Show-SaveNotification -SavedFileCount 2 -TouchedFolders @("DJ99999_") -EnableNotification $true -ShowPopup $mockShowPopupThrows
+    Assert-Equal -Name "通知: ShowPopup失敗時はFailed" -Expected "Failed" -Actual $n6.Action
+    Assert-True -Name "通知: Failed時にErrorメッセージが入る" -Condition (-not [string]::IsNullOrEmpty($n6.Error)) -Detail "Error=[$($n6.Error)]"
 
 }
 finally {
