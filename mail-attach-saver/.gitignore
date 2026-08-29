@@ -1,0 +1,4 @@
+config.local.ps1
+logs/
+*.zip
+*.bak
