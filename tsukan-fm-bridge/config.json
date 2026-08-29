@@ -1,0 +1,12 @@
+{
+  "_readme": "これはリポジトリに追跡される安全なテンプレートです。実書類の元パスや案件フォルダの実名（社名・ブランド名を含み得るため）はここに書きません。実行前に、同じフォルダに config.local.json（.gitignore対象・追跡外）を作成し、cases_root と case_map を設定してください。ひな形は config.local.example.json を参照。環境変数 TSUKAN_CASES_ROOT でも cases_root を上書きできます。",
+
+  "answer_key_filename_pattern": "評価管理表",
+  "answer_key_min_header_row_score": 3,
+  "answer_key_header_scan_rows": 15,
+
+  "ocr_min_chars_per_page": 20,
+
+  "fm_import_csv_name": "fm_import.csv",
+  "fm_import_csv_encoding": "utf-8-sig"
+}

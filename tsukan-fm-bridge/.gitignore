@@ -1,0 +1,12 @@
+# 実行結果（実データの抽出値・突合結果を含む。絶対にコミットしない）
+out/
+_local/
+
+# 実書類の元パス・案件フォルダ実名を含むローカル設定（絶対にコミットしない）
+# 詳細は README.md「機密について」参照。テンプレートは config.local.example.json。
+config.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/

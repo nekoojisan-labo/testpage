@@ -1,0 +1,11 @@
+{
+  "_readme": "config.local.json のひな形。実際の値を入れてから『config.local.json』というファイル名で同じフォルダに保存してください（.gitignore対象なのでコミットされません）。",
+
+  "cases_root": "C:\\path\\to\\parent\\folder\\that\\directly\\contains\\the\\10\\case\\folders",
+
+  "case_map": {
+    "case01": "REPLACE-WITH-REAL-CASE-FOLDER-NAME-1",
+    "case02": "REPLACE-WITH-REAL-CASE-FOLDER-NAME-2",
+    "case03": "REPLACE-WITH-REAL-CASE-FOLDER-NAME-3"
+  }
+}

@@ -1,0 +1,346 @@
+# fields.yaml — たたき台v0 仮スキーマ
+#
+# ★ FM側レイアウト確定後に列マッピングを差し替える仮スキーマです ★
+# ここで決めている id・並び順・型は「今はこう仮置きしている」というだけで、
+# FileMaker側の実レイアウトが決まり次第、列対応をまるごと差し替える前提。
+#
+# 出典: IDA入力項目マスター_共通部_v0_3.md セクションA【抽出】欄（v0.3）。
+# ida_item_no / official_symbol は出典ドキュメントの表記をそのまま転記した。
+#   official_symbol: M=必須入力 / C=条件付き入力 / F=システム補完 / X=入力不可
+#
+# v0_target:
+#   true  = このデータセット（INV/PL・評価書類・出荷書類・検査書類）内に
+#           一次情報がある可能性が高く、v0で正規表現抽出を試みるフィールド
+#   false = 一次情報が通関依頼書など「本データセットに含まれない書類」側にあるため、
+#           v0では抽出を試みない（＝未検出は想定内。今後その書類が入手できた時点で
+#           v0_target を true にして regex_hints を足す）
+#
+# source_docs は doc_kind（extract.py の自動分類結果）のリスト。
+# 候補探索は source_docs に一致する書類を優先し、見つからなければ他の書類にも
+# フォールバックする（フォールバック一致は candidates.csv 上 confidence=low で区別）。
+#
+# regex_hints は「上から順に試し、最初にヒットしたものを採用」
+# （customs-formatter/rules/extraction_invoice.yaml の方針を踏襲）。
+# 1行単位でのみ一致を試みる（複数行にまたがる値はv0では非対応・既知の限界）。
+
+doc_kinds:
+  - invoice_packing_list   # INV/PL相当PDF・INV系xlsx
+  - evaluation_doc         # 評価書類PDF（COMMISSION評価書類・評価点シート等）
+  - shipping_doc           # 出荷書類PDF（船積関連の束、清关系xlsxもここに含める）
+  - inspection_cert        # 検査・保険関係書類
+  - customs_request        # 通関依頼書（本データセットには含まれない想定）
+  - manual_answer_key      # 人手完成形の評価管理表xlsx（抽出対象外・compare.py専用）
+  - unclassified           # 上記に自動分類できなかった書類（フォールバック探索対象）
+
+fields:
+
+  - id: amount_class
+    label_ja: "大額/少額識別（L/S）"
+    ida_item_no: "3"
+    official_symbol: M
+    type: "enum(L,S)"
+    source_docs: [invoice_packing_list]
+    v0_target: false
+    regex_hints: []
+    notes: >
+      L/Sの閾値金額が未確定（IDA v0.3の「残る確認事項」）。
+      v0は仕入書価格(invoice_amount)の抽出止まりで、L/S判定ロジックは対象外。
+
+  - id: importer_code
+    label_ja: "輸入者コード（符号17桁）"
+    ida_item_no: "13"
+    official_symbol: C
+    type: "string(17)"
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "取得元は通関依頼書。本データセット（INV/PL・評価書類・出荷書類）には含まれない想定。"
+
+  - id: bonded_warehouse_code
+    label_ja: "通関予定蔵置場コード（5桁）"
+    ida_item_no: "24"
+    official_symbol: M
+    type: "string(5)"
+    source_docs: [customs_request, shipping_doc]
+    v0_target: false
+    regex_hints: []
+    notes: "契約による固定＋AN/依頼書＋補助シートが必要。v0では未対応。"
+
+  - id: import_trader_code
+    label_ja: "輸入取引者コード"
+    ida_item_no: "27"
+    official_symbol: C
+    type: string
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "限定申告者時のみ・荷主/案件で変わる。本データセットに一次情報なし。"
+
+  - id: shipper_code
+    label_ja: "仕出人コード"
+    ida_item_no: "29"
+    official_symbol: C
+    type: string
+    source_docs: [invoice_packing_list]
+    v0_target: false
+    regex_hints: []
+    notes: >
+      主INVOICEのSHIPPER欄テキストから符号マスタへの照合が必要（照合はv0対象外）。
+      v0はテキストそのものを shipper_name_address 側で抽出する。
+
+  - id: shipper_name_address
+    label_ja: "仕出人名・住所（新規SHIPPERのみ）"
+    ida_item_no: "30-36"
+    official_symbol: F
+    type: string
+    source_docs: [invoice_packing_list]
+    v0_target: true
+    regex_hints:
+      - 'SELLER[ \t]*[:：][ \t]*(?P<value>[^\r\n\t]+)'
+      - '(?:SELLER|SHIPPER|EXPORTER)[ \t]*[:：][ \t]*(?P<value>[^\r\n\t]+)'
+    notes: >
+      既存SHIPPER（符号登録済）はNACCS補完で不要、新規SHIPPERのみAI抽出対象
+      （IDA v0.3 セクションB）。v0は単一行一致のみ（複数行にまたがる住所は非対応・既知の限界）。
+
+  - id: bl_no
+    label_ja: "B/L番号（35桁・最大5口）"
+    ida_item_no: "38"
+    official_symbol: M
+    type: "string(35) x最大5"
+    source_docs: [shipping_doc]
+    v0_target: true
+    regex_hints:
+      - 'B[/]?L[ \t]*NO\.?[ \t]*[:：][ \t]*(?P<value>[A-Z0-9]+)'
+      - '(?:BILL[ \t]*OF[ \t]*LADING|B[ /\.]?L|WAYBILL)[ \t]*(?:NO|NUMBER)?\.?[ \t]*[:：]?[ \t]*(?P<value>[A-Z]{2,}[A-Z0-9]{4,})'
+    notes: >
+      extraction_invoice.yaml の bl_no を流用。出荷書類.pdf が要OCR判定になった案件では
+      未検出になりやすい（既知の限界）。
+
+  - id: cargo_pieces
+    label_ja: "貨物個数"
+    ida_item_no: "39"
+    official_symbol: C
+    type: number
+    source_docs: [shipping_doc, invoice_packing_list]
+    v0_target: true
+    regex_hints:
+      - 'PACKAGES?[ \t]*[:：][ \t]*(?P<value>[0-9]+[ \t]*[A-Z]+)'
+      - '(?:TOTAL[ \t]*)?(?:NO\.?[ \t]*OF[ \t]*)?(?:PACKAGES?|CARTONS?|CTNS?|PKGS?|CASES?)[ \t]*[:：]?[ \t]*(?P<value>[0-9]+[ \t]*[A-Z]*)'
+    notes: "extraction_invoice.yaml の packages を流用。"
+
+  - id: gross_weight
+    label_ja: "貨物重量グロス"
+    ida_item_no: "41"
+    official_symbol: C
+    type: "number+unit"
+    source_docs: [shipping_doc, invoice_packing_list]
+    v0_target: true
+    regex_hints:
+      - 'GROSS[ \t]*WEIGHT[ \t]*[:：][ \t]*(?P<value>[0-9.]+[ \t]*[A-Z]+)'
+      - '(?:GROSS[ \t]*WEIGHT|G\.?[ \t]*W\.?)[ \t]*[:：]?[ \t]*(?P<value>[0-9][0-9,.]*[ \t]*(?:KGS?|KG|MT|TON|LBS?)?)'
+    notes: "extraction_invoice.yaml の gross_weight を流用。"
+
+  - id: vessel_code
+    label_ja: "積載船舶コード（9桁）"
+    ida_item_no: "44"
+    official_symbol: C
+    type: "string(9)"
+    source_docs: [shipping_doc]
+    v0_target: false
+    regex_hints: []
+    notes: "船舶コードシートとの照合が必要。v0は船名テキスト(vessel_name)のみ抽出。"
+
+  - id: vessel_name
+    label_ja: "積載船（機）名"
+    ida_item_no: "45"
+    official_symbol: C
+    type: string
+    source_docs: [shipping_doc]
+    v0_target: true
+    regex_hints:
+      - 'VESSEL[ \t]*[:：][ \t]*(?P<value>[A-Z][A-Z ]+?)[ \t]{2,}'
+      - '(?:OCEAN[ \t]*)?VESSEL(?:[ \t]*/[ \t]*VOYAGE)?[ \t]*[:：][ \t]*(?P<value>[A-Z][A-Z0-9 \.\-]+)'
+      - '本船(?:名)?[ \t]*[:：]?[ \t]*(?P<value>[^\r\n\t]+)'
+    notes: >
+      extraction_invoice.yaml の vessel を流用（複数行前提の元パターンは1行対応に簡略化・既知の限界）。
+
+  - id: pod_code
+    label_ja: "船（取）卸港コード（3桁）"
+    ida_item_no: "47"
+    official_symbol: C
+    type: "string(3)"
+    source_docs: [shipping_doc]
+    v0_target: false
+    regex_hints: []
+    notes: "LOCODE末尾3桁への変換が必要。v0対象外（余力があれば港名称テキスト抽出を追加）。"
+
+  - id: pol_code
+    label_ja: "積出地コード（5桁）"
+    ida_item_no: "48"
+    official_symbol: C
+    type: "string(5)"
+    source_docs: [shipping_doc]
+    v0_target: false
+    regex_hints: []
+    notes: "LOCODE5桁への変換が必要。v0対象外。"
+
+  - id: trade_type_code
+    label_ja: "貿易形態別符号"
+    ida_item_no: "50"
+    official_symbol: C
+    type: code
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "統計計上を要する貨物の時のみ。判定ロジック含め v0対象外。"
+
+  - id: container_count
+    label_ja: "コンテナ扱い本数"
+    ida_item_no: "51"
+    official_symbol: C
+    type: number
+    source_docs: [shipping_doc]
+    v0_target: true
+    regex_hints:
+      - '(?<![A-Z0-9])[A-Z]{4}[0-9]{7}(?![A-Z0-9])'
+    notes: >
+      コンテナ番号規格（英字4桁+数字7桁）のヒット件数で本数を代用推定する簡易ロジック。
+      コンテナ扱いなしの案件は0件＝0本が正解になる想定。
+
+  - id: delivery_place_type
+    label_ja: "運送場所識別（C/N/T/M）"
+    ida_item_no: "52"
+    official_symbol: M
+    type: "enum(C,N,T,M)"
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "取得元は通関依頼書の納品先欄。本データセットに一次情報なし。"
+
+  - id: delivery_place_detail
+    label_ja: "運送場所 所在地/名称/電話（T/M時必須）"
+    ida_item_no: "53-60"
+    official_symbol: C
+    type: string
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "T/M時のみ必須。本データセットに一次情報なし。"
+
+  - id: invoice_no
+    label_ja: "仕入書番号"
+    ida_item_no: "画面2-仕入書番号"
+    official_symbol: C
+    type: string
+    source_docs: [invoice_packing_list]
+    v0_target: true
+    regex_hints:
+      - 'INVOICE[ \t]*NO\.?[ \t]*[:：][ \t]*(?P<value>[A-Z0-9][A-Z0-9\-/]+)'
+      - 'INVOICE[ \t]*(?:NO|NUMBER|#)\.?[ \t]*[:：]?[ \t]*(?P<value>[A-Z0-9][A-Z0-9\-/]{2,})'
+      - 'INV\.?[ \t]*NO\.?[ \t]*[:：]?[ \t]*(?P<value>[A-Z0-9][A-Z0-9\-/]{2,})'
+    notes: >
+      extraction_invoice.yaml の invoice_no を流用。ファイル名に案件番号が
+      含まれる書類が多く、本文一致率が低い場合はファイル名補助案を次の一手として検討。
+
+  - id: invoice_amount
+    label_ja: "仕入書価格（条件/通貨/金額）"
+    ida_item_no: "画面2-仕入書価格"
+    official_symbol: M
+    type: "string(建値+通貨+金額)"
+    source_docs: [invoice_packing_list]
+    v0_target: true
+    regex_hints:
+      - 'TOTAL[ \t]*AMOUNT[ \t]*[:：][ \t]*(?P<value>[0-9,]+\.[0-9]{2})'
+      - '(?:GRAND[ \t]*)?TOTAL(?:[ \t]*AMOUNT)?[ \t]*(?:[A-Z$¥€]{1,4})?[ \t]*[:：]?[ \t]*(?P<value>[0-9][0-9,]*\.[0-9]{2})'
+    notes: >
+      extraction_invoice.yaml の total_amount を流用。建値(INCOTERMS)・通貨の
+      分離抽出はv0対象外（金額のみ／建値は remarks_customs 側で別途試みる）。
+
+  - id: freight
+    label_ja: "運賃"
+    ida_item_no: "画面2-運賃"
+    official_symbol: C
+    type: amount
+    source_docs: [shipping_doc]
+    v0_target: true
+    regex_hints:
+      - 'FREIGHT[ \t]*[:：][ \t]*(?P<value>[0-9,]+\.?[0-9]*)'
+      - '(?:OCEAN[ \t]*)?FREIGHT(?:[ \t]*CHARGE)?[ \t]*[:：]?[ \t]*(?P<value>[0-9][0-9,]*\.?[0-9]*)'
+    notes: >
+      FOB/C&F時のみ主AN(Arrival Notice)から取得。document_classification.yaml の
+      arrival_notice キーワード(FREIGHT)を分類ヒントとして流用。
+
+  - id: insurance
+    label_ja: "保険"
+    ida_item_no: "画面2-保険"
+    official_symbol: C
+    type: "amount/flag"
+    source_docs: [inspection_cert, customs_request]
+    v0_target: true
+    regex_hints:
+      - 'INSURANCE[ \t]*[:：][ \t]*(?P<value>[^\r\n\t]+)'
+      - '(?:INSURANCE|MARINE[ \t]*INSURANCE)[ \t]*(?:AMOUNT|PREMIUM)?[ \t]*[:：]?[ \t]*(?P<value>[^\r\n\t]+)'
+    notes: "個別保険の要否判定には通関依頼書側の情報が必要な場合あり。v0は検査/保険書類内のテキスト一致のみ。"
+
+  - id: duty_payment
+    label_ja: "納期限延長/納付方法/口座番号"
+    ida_item_no: "画面2-納期限延長ほか"
+    official_symbol: C
+    type: string
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "取得元は通関依頼書。本データセットに一次情報なし。"
+
+  - id: bond_no
+    label_ja: "担保番号（延納番号）"
+    ida_item_no: "画面2-担保番号"
+    official_symbol: C
+    type: string
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "通関依頼書/固定値運用。本データセットに一次情報なし。"
+
+  - id: remarks_customs
+    label_ja: "記事（税関）"
+    ida_item_no: "画面2-記事(税関)"
+    official_symbol: C
+    type: string
+    source_docs: [invoice_packing_list]
+    v0_target: true
+    regex_hints:
+      - '(?:INCOTERMS?|TERMS?[ \t]*OF[ \t]*(?:SALE|DELIVERY|TRADE))[ \t]*[:：]?[ \t]*(?P<value>FOB|CFR|CIF|C&F|EXW|FCA|CPT|CIP|DAP|DDP)'
+      - '\b(?P<value>FOB|CFR|CIF|C&F|EXW|FCA|CPT|CIP|DAP|DDP)\b'
+    notes: "建値判定の材料としてINCOTERMS表記を抽出。税関記事欄への転記ロジック自体はv0対象外。"
+
+  - id: remarks_clearance
+    label_ja: "記事（通関）PICK日"
+    ida_item_no: "画面2-記事(通関)"
+    official_symbol: C
+    type: "string(MMDD)"
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "取得元は依頼書のPICK日。本データセットに一次情報なし。"
+
+  - id: remarks_shipper
+    label_ja: "記事（荷主）/荷主セクションコード/荷主Ref No."
+    ida_item_no: "画面2-記事(荷主)ほか"
+    official_symbol: C
+    type: string
+    source_docs: [customs_request, invoice_packing_list]
+    v0_target: true
+    regex_hints:
+      - '(?:REF(?:ERENCE)?\.?[ \t]*NO\.?)[ \t]*[:：][ \t]*(?P<value>[A-Z0-9][A-Z0-9\-/]+)'
+    notes: "依頼書の特記事項が本義。v0はINV/PL上のREF NOらしき表記のみ拾う簡易版。"
+
+  - id: internal_ref_no
+    label_ja: "社内整理番号"
+    ida_item_no: "画面2-社内整理番号"
+    official_symbol: C
+    type: string
+    source_docs: [customs_request]
+    v0_target: false
+    regex_hints: []
+    notes: "依頼書Ref＋固定接尾番号。本データセットに一次情報なし。"
