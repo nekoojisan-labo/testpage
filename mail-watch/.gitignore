@@ -1,0 +1,5 @@
+config.local.ps1
+logs/
+received/
+*.bak
+*.zip

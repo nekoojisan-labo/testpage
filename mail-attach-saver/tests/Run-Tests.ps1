@@ -347,7 +347,9 @@ try {
     Assert-Equal -Name "添付保存(本実行): 最終的に保存先ファイルは2つ" -Expected 2 -Actual (@(Get-ChildItem -LiteralPath $realTargetFolder -Filter "report*.pdf").Count)
 
     # ============================================================
-    # 9. [レビュー反映・バグ1] Show-SaveNotification（通知の判定ロジック）
+    # 9. [レビュー反映・バグ1／mail-watch対応] Show-SaveNotification（通知の判定ロジック）
+    #    [シグネチャ変更] メッセージ文言はもう内部で組み立てず、呼び出し側が
+    #    -Message で渡す（mail-watch等ツールごとに文言が違うため一般化した）。
     #    実際のポップアップ表示（WScript.Shell.Popup）はOutlook非依存のこの
     #    テストでは呼べない/呼ぶべきでないため、-ShowPopup にモックの
     #    スクリプトブロックを注入し、「呼ばれたか・何回か・どんなメッセージで」を検証する。
@@ -358,46 +360,59 @@ try {
     $mockShowPopup = { param($m) $script:mockCallCount++ }
 
     $script:mockCallCount = 0
-    $n1 = Show-SaveNotification -SavedFileCount 3 -TouchedFolders @("DJ11111_") -EnableNotification $true -ShowPopup $mockShowPopup -DryRun
+    $n1 = Show-SaveNotification -SavedFileCount 3 -Message "test-message" -EnableNotification $true -ShowPopup $mockShowPopup -DryRun
     Assert-Equal -Name "通知: DryRun中はSkipped" -Expected "Skipped" -Actual $n1.Action
     Assert-Equal -Name "通知: DryRun中はShowPopupを呼ばない" -Expected 0 -Actual $script:mockCallCount
 
     # 抑制条件2: $EnableNotification=$false のときは出さない
     $script:mockCallCount = 0
-    $n2 = Show-SaveNotification -SavedFileCount 3 -TouchedFolders @("DJ11111_") -EnableNotification $false -ShowPopup $mockShowPopup
+    $n2 = Show-SaveNotification -SavedFileCount 3 -Message "test-message" -EnableNotification $false -ShowPopup $mockShowPopup
     Assert-Equal -Name "通知: EnableNotification=falseはSkipped" -Expected "Skipped" -Actual $n2.Action
     Assert-Equal -Name "通知: EnableNotification=falseはShowPopupを呼ばない" -Expected 0 -Actual $script:mockCallCount
 
     # 抑制条件3: 保存0件のときは出さない
     $script:mockCallCount = 0
-    $n3 = Show-SaveNotification -SavedFileCount 0 -TouchedFolders @() -EnableNotification $true -ShowPopup $mockShowPopup
+    $n3 = Show-SaveNotification -SavedFileCount 0 -Message "test-message" -EnableNotification $true -ShowPopup $mockShowPopup
     Assert-Equal -Name "通知: 保存0件はSkipped" -Expected "Skipped" -Actual $n3.Action
     Assert-Equal -Name "通知: 保存0件はShowPopupを呼ばない" -Expected 0 -Actual $script:mockCallCount
 
-    # 通常ケース: 条件を満たせば1回だけ呼ばれ、メッセージに件数とフォルダ名が入る
+    # 通常ケース: 条件を満たせば1回だけ呼ばれ、渡したメッセージがそのままShowPopupへ渡る
     $script:mockCallCount = 0
     $script:mockLastMessage = $null
     $mockShowPopupCapture = { param($m) $script:mockCallCount++; $script:mockLastMessage = $m }
-    $n4 = Show-SaveNotification -SavedFileCount 4 -TouchedFolders @("DJ26779_", "BJ12345_") -EnableNotification $true -ShowPopup $mockShowPopupCapture
+    $n4 = Show-SaveNotification -SavedFileCount 4 -Message "添付ファイルを 4 件保存しました。DJ26779_" -EnableNotification $true -ShowPopup $mockShowPopupCapture
     Assert-Equal -Name "通知: 条件を満たせばShown" -Expected "Shown" -Actual $n4.Action
     Assert-Equal -Name "通知: ShowPopupは1回だけ呼ばれる" -Expected 1 -Actual $script:mockCallCount
-    Assert-True -Name "通知: メッセージに保存件数が入る" -Condition ($script:mockLastMessage -like "*4*") -Detail "msg=[$script:mockLastMessage]"
-    Assert-True -Name "通知: メッセージにフォルダ名が入る(1)" -Condition ($script:mockLastMessage -like "*DJ26779_*") -Detail "msg=[$script:mockLastMessage]"
-    Assert-True -Name "通知: メッセージにフォルダ名が入る(2)" -Condition ($script:mockLastMessage -like "*BJ12345_*") -Detail "msg=[$script:mockLastMessage]"
-
-    # フォルダ6件超は先頭5件+「他n件」に要約される
-    $manyFolders = @(1..8 | ForEach-Object { "CODE{0:D5}_" -f $_ })
-    $script:mockLastMessage = $null
-    $n5 = Show-SaveNotification -SavedFileCount 8 -TouchedFolders $manyFolders -EnableNotification $true -ShowPopup $mockShowPopupCapture
-    Assert-True -Name "通知: 7件超のフォルダは先頭5件を含む" -Condition ($script:mockLastMessage -like "*CODE00001_*" -and $script:mockLastMessage -like "*CODE00005_*") -Detail "msg=[$script:mockLastMessage]"
-    Assert-True -Name "通知: 7件超のフォルダは6件目以降を含まない" -Condition ($script:mockLastMessage -notlike "*CODE00006_*") -Detail "msg=[$script:mockLastMessage]"
-    Assert-True -Name "通知: 7件超のフォルダは「他n件」で要約される" -Condition ($script:mockLastMessage -like "*他 3 件*") -Detail "msg=[$script:mockLastMessage]"
+    Assert-Equal -Name "通知: 渡したメッセージがそのままShowPopupへ渡る" -Expected "添付ファイルを 4 件保存しました。DJ26779_" -Actual $script:mockLastMessage
+    Assert-Equal -Name "通知: 戻り値のMessageも一致する" -Expected "添付ファイルを 4 件保存しました。DJ26779_" -Actual $n4.Message
 
     # ShowPopupが失敗した場合はFailedを返し、例外は外に漏れない
     $mockShowPopupThrows = { param($m) throw "COM呼び出しが失敗したという想定のテスト例外" }
-    $n6 = Show-SaveNotification -SavedFileCount 2 -TouchedFolders @("DJ99999_") -EnableNotification $true -ShowPopup $mockShowPopupThrows
+    $n6 = Show-SaveNotification -SavedFileCount 2 -Message "test-message" -EnableNotification $true -ShowPopup $mockShowPopupThrows
     Assert-Equal -Name "通知: ShowPopup失敗時はFailed" -Expected "Failed" -Actual $n6.Action
     Assert-True -Name "通知: Failed時にErrorメッセージが入る" -Condition (-not [string]::IsNullOrEmpty($n6.Error)) -Detail "Error=[$($n6.Error)]"
+
+    # ============================================================
+    # 10. [レビュー反映・mail-watch対応] Format-TruncatedList（一覧の先頭N件+他n件要約）
+    #     元はShow-SaveNotification内蔵だったフォルダ一覧要約ロジックを汎用化したもの。
+    # ============================================================
+    $shortList = @("A", "B", "C")
+    $r = Format-TruncatedList -Items $shortList -Threshold 6 -ShowCount 5
+    Assert-Equal -Name "一覧要約: 閾値以下はそのまま(件数)" -Expected 3 -Actual (@($r).Count)
+    Assert-Equal -Name "一覧要約: 閾値以下はそのまま(中身)" -Expected "A,B,C" -Actual (($r) -join ",")
+
+    $manyFolders = @(1..8 | ForEach-Object { "CODE{0:D5}_" -f $_ })
+    $r = Format-TruncatedList -Items $manyFolders -Threshold 6 -ShowCount 5
+    Assert-Equal -Name "一覧要約: 8件は先頭5件+他3件で計6件" -Expected 6 -Actual (@($r).Count)
+    Assert-Equal -Name "一覧要約: 先頭5件目まで含まれる" -Expected "CODE00005_" -Actual $r[4]
+    Assert-Equal -Name "一覧要約: 最後は「他3件」" -Expected "他 3 件" -Actual $r[5]
+    Assert-True -Name "一覧要約: 6件目以降(CODE00006_)は含まれない" -Condition (($r -join ",") -notlike "*CODE00006_*")
+
+    $r = Format-TruncatedList -Items @() -Threshold 6 -ShowCount 5
+    Assert-Equal -Name "一覧要約: 空配列は空配列のまま" -Expected 0 -Actual (@($r).Count)
+
+    $r = Format-TruncatedList -Items $null -Threshold 6 -ShowCount 5
+    Assert-Equal -Name "一覧要約: nullも空配列扱い" -Expected 0 -Actual (@($r).Count)
 
 }
 finally {

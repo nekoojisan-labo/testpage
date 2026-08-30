@@ -1,12 +1,17 @@
 ﻿#requires -Version 5.1
 <#
-    MailAttachLib.ps1
+    MailAttachLib.ps1  （mail-watch 用の複製）
 
-    Outlook添付ファイル自動保存ツールの「純粋ロジック」関数群。
+    ★正本は ..\mail-attach-saver\MailAttachLib.ps1 側（本ツールと同じ階層にある想定）。
+    ★改修時は両方へ反映すること（特にGet-CodeFromSubject〜Show-SaveNotification/
+      Format-TruncatedListまでの共通部分。Test-SenderMatch以降はmail-watch固有の
+      追加分で、mail-attach-saver側には無い＝差分があって正常）。
+
+    Outlook添付ファイル関連ツールの「純粋ロジック」関数群。
     Outlook COM に一切依存しない（=このファイル単体で tests\Run-Tests.ps1 から
     合成データを使ってテストできる）。
 
-    Save-MailAttachments.ps1 からは次のように読み込む:
+    Watch-ClientMail.ps1 からは次のように読み込む:
         . (Join-Path $PSScriptRoot "MailAttachLib.ps1")
 
     ここに書いてよいこと:
@@ -18,7 +23,8 @@
 
 # ------------------------------------------------------------
 # Get-CodeFromSubject
-#   件名から管理コードを抽出する。
+#   件名から管理コードを抽出する。mail-watch本体では現状使用しないが、
+#   mail-attach-saver側との複製の一致を保つため残してある。
 #   - $Patterns は正規表現の配列（大文字小文字は無視して照合する）
 #   - 複数パターン・同一パターンの複数マッチをすべて集め、件名内で最も先頭に
 #     現れたものを採用する（"先頭のコードを採用"仕様に対応）
@@ -121,12 +127,12 @@ function ConvertTo-SafeName {
 #   保存先フォルダ内の実ファイルを確認し、実際に使うファイル名を決定する。
 #   （冪等性＝事故復旧の要。同名・同実サイズ・同ハッシュなら「保存済み」とみなしスキップする）
 #
-#   [レビュー反映] COMの Attachment.Size は MAPI PR_ATTACH_SIZE 由来で、実際の
-#   添付内容（保存後のファイルの実バイト数）より大きいことがあるとMicrosoft公式にも
-#   明記されている（S/MIME等）。そのため本関数は att.Size のような近似値ではなく、
-#   「実際に書き出したファイルの実サイズ・実ハッシュ」を呼び出し側から渡してもらう
-#   前提に変更した。呼び出し側（Save-AttachmentToTarget）は一時ファイルへ保存してから
-#   その実サイズ・実ハッシュを計算して本関数に渡す。
+#   COMの Attachment.Size は MAPI PR_ATTACH_SIZE 由来で、実際の添付内容（保存後の
+#   ファイルの実バイト数）より大きいことがあるとMicrosoft公式にも明記されている
+#   （S/MIME等）。そのため本関数は att.Size のような近似値ではなく、「実際に
+#   書き出したファイルの実サイズ・実ハッシュ」を呼び出し側から渡してもらう前提。
+#   呼び出し側（Save-AttachmentToTarget）は一時ファイルへ保存してからその実サイズ・
+#   実ハッシュを計算して本関数に渡す。
 #
 #   戻り値:
 #     - 同名で実サイズも一致するファイルが既にある
@@ -138,11 +144,9 @@ function ConvertTo-SafeName {
 #           ＝過去に同じ内容を連番名で保存済みだった場合の再実行にも対応する）
 #     - 同名のファイルが存在しない               → 渡された名前をそのまま返す
 #
-#   [レビュー反映・軽微3] スキップ（$null）の場合、実際に一致した既存ファイル名
-#   （ベース名のこともあれば "name (2).ext" 等の連番名のこともある）を
-#   呼び出し側へ伝えるための任意の [ref]$MatchedName パラメータを追加した。
-#   スキップ以外（そのまま／連番で新規保存）のときは $MatchedName は変更しない。
-#   省略可能なので、既存の呼び出し（このパラメータを渡さない）は影響を受けない。
+#   スキップ（$null）の場合、実際に一致した既存ファイル名（ベース名のこともあれば
+#   "name (2).ext" 等の連番名のこともある）を呼び出し側へ伝えるための任意の
+#   [ref]$MatchedName パラメータがある。省略可能。
 #
 #   $Folder はテスト時には一時ディレクトリを渡す想定。実フォルダを見る実装。
 # ------------------------------------------------------------
@@ -283,6 +287,9 @@ function Limit-PathLength {
 #   受信日時の古い順に並べ替えたうえで、1回の実行で処理する件数の上限を適用する。
 #   -Backfill 指定時は上限を解除し全件を対象にする。
 #
+#   mail-watchでは「候補（差出人ドメイン一致かつ保存対象添付あり）」に対して
+#   この上限を適用する（mail-attach-saverのバグ2修正と同じ3フェーズ思想）。
+#
 #   $MailInfos は COM に依存しない PSCustomObject の配列（各要素は最低限
 #   ReceivedTime [datetime] プロパティを持つこと。EntryID 等は本体側で付与）。
 #
@@ -371,11 +378,11 @@ function Test-InlineAttachment {
 }
 
 # ------------------------------------------------------------
-# [レビュー反映・修正3] 書き込み3系統の集約
-#   フォルダ作成／添付保存／processed-ids追記 の3つの「実際に書き込む」処理を
-#   ここに集約し、いずれも -DryRun 指定時はファイルシステムへ一切書き込まず
-#   計画情報だけを返す構造にする。Save-MailAttachments.ps1（本体）はこれらの
-#   関数を呼ぶだけにし、DryRunかどうかの分岐をあちこちに書かない。
+# 書き込み系統の集約
+#   フォルダ作成／添付保存／processed-ids追記／(mail-watch追加分)イベント記録追記
+#   の「実際に書き込む」処理をここに集約し、いずれも -DryRun 指定時はファイル
+#   システムへ一切書き込まず計画情報だけを返す構造にする。本体はこれらの関数を
+#   呼ぶだけにし、DryRunかどうかの分岐をあちこちに書かない。
 #
 #   Save-AttachmentToTarget だけは実際の保存という性質上「添付の中身をどこかに
 #   書き出す処理」が要るが、Outlook COMを直接参照させないために -WriteTempFile に
@@ -443,9 +450,9 @@ function Add-ProcessedId {
 # Save-AttachmentToTarget
 #   添付ファイルの保存（添付保存の書き込み系統）。
 #
-#   [レビュー反映・修正1] 本実行時は次の流れで「実サイズ・実ハッシュ」に基づいて判定する:
+#   本実行時は次の流れで「実サイズ・実ハッシュ」に基づいて判定する:
 #     1. $WriteTempFile スクリプトブロックで $TempFolder 配下の一時ファイルへ書き出す
-#        （$TempFolder は $SaveRoot ではなくローカル(logs\tmp)を渡す想定。
+#        （$TempFolder はローカルの一時フォルダを渡す想定。
 #          Move-Itemがボリューム跨ぎで実質コピーになっても問題ない）
 #     2. 書き出された一時ファイルの実際の Length と MD5 ハッシュを計算する
 #     3. Get-SaveFileName にその実サイズ・実ハッシュを渡して判定する
@@ -460,7 +467,7 @@ function Add-ProcessedId {
 #   概算判定にとどめる（MAPIのPR_ATTACH_SIZEは実サイズと厳密一致しない場合があるため、
 #   ここでの判定はあくまで概算であり、本実行時の実サイズ・実ハッシュ判定より精度が低いことに注意）。
 #
-#   戻り値: PSCustomObject @{ Action = <string>; SavedPath = <string|$null>; Truncated = <bool> }
+#   戻り値: PSCustomObject @{ Action = <string>; SavedPath = <string|$null>; Truncated = <bool>; MatchedName = <string|$null> }
 #     Action: "Saved" | "Skip" | "SaveEstimate"(DryRunの保存予定) | "SkipEstimate"(DryRunのスキップ見込み)
 # ------------------------------------------------------------
 function Save-AttachmentToTarget {
@@ -518,8 +525,6 @@ function Save-AttachmentToTarget {
     $actualSize = (Get-Item -LiteralPath $tmpPath).Length
     $actualHash = (Get-FileHash -LiteralPath $tmpPath -Algorithm MD5).Hash
 
-    # [レビュー反映・軽微3] 実際に一致した既存ファイル名（連番側のこともある）を
-    # ログ表示できるよう -MatchedName で受け取る。
     $matchedNameRef = [ref]$null
     $saveName = Get-SaveFileName -Folder $TargetFolder -FileName $SafeFileName -ActualSize $actualSize -ActualHash $actualHash -MatchedName $matchedNameRef
 
@@ -552,41 +557,12 @@ function Save-AttachmentToTarget {
 }
 
 # ------------------------------------------------------------
-# [レビュー反映・バグ1] Show-SaveNotification
-#   保存完了ポップアップの「出すか出さないか・何を表示するか」という判定ロジックを
-#   ここに切り出し、実際にポップアップを表示する処理（Outlook非依存にできない
-#   WScript.Shell COM呼び出し）は -ShowPopup スクリプトブロックとして注入させる。
-#   これにより判定ロジック自体はOutlook無しでテストでき、ShowPopup側はテストで
-#   モック（記録するだけの偽物）に差し替えられる。
-#
-#   診断の経緯: 実機リハーサルで「保存4件・フォルダ2件があったのにポップアップが
-#   出た形跡がなく、ログにも通知関連の行が一切ない」という事象が報告された。
-#   本体側のコードを変数レベルで追跡した限り、$DryRun/$EnableNotification/
-#   $savedFileCount の条件分岐そのものにはバグが見当たらず、この開発機で
-#   （Outlook・Z:・タスク登録には触れない範囲で）WScript.Shell.Popup単体の
-#   動作を実測したところ、-WindowStyle Hidden で起動した子プロセスからでも
-#   Popupは実際に可視ウィンドウを生成し、閉じられるまで正しくブロックすることを
-#   確認した（=Popup自体が機能しない、という仮説は再現しなかった）。
-#   一方で、当時のコードは「ポップアップ表示を試みた」ことを示すログを一切
-#   出していなかったため、以下のいずれが起きたのかをログから区別する手段が
-#   無かった: (a)このコード自体に到達していない (b)到達しPopupが呼ばれたが
-#   まだ閉じられておらずブロック中（前面に出ず見落とされた可能性を含む）
-#   (c)呼び出しは失敗したがその失敗ログ自体の書き込みが別の理由で失敗した。
-#   この「区別できない」こと自体が実質的な欠陥だったため、表示直前ログの追加
-#   （呼び出し元のSave-MailAttachments.ps1側で行う）と、見落とされにくくする
-#   ための表示方法の見直し（システムモーダル化。呼び出し元で実施）をセットで
-#   行うこととした。
-#
-#   [レビュー反映・mail-watch対応] 当初はメッセージ文言（「添付ファイルをN件保存
-#   しました」＋フォルダ名一覧）をこの関数の内部で組み立てていたが、姉妹ツール
-#   mail-watch（法人案件A個人用ウォッチャー）を作る際に「保存件数の言い回しも
-#   列挙する対象（フォルダ名でなく件名）も全く違うメッセージを出したい」という
-#   要求が出た。ツールごとに文言をハードコードした関数を複製すると
-#   MailAttachLib.ps1の「正本を1箇所に保つ」という設計方針に反するため、
-#   メッセージ文字列そのものは呼び出し側に組み立てさせ、この関数は
-#   「出すか出さないかの判定」「ShowPopup呼び出しとその失敗処理」という
-#   ツール非依存の部分だけを持つ形に一般化した（後方互換ではない破壊的変更。
-#   呼び出し側は事前に Format-TruncatedList 等でメッセージを組み立てて渡す）。
+# Show-SaveNotification
+#   保存完了ポップアップの「出すか出さないか」の判定ロジックだけを持つ。
+#   メッセージ文言はツールごとに違うため、呼び出し側が -Message で組み立てて渡す。
+#   実際にポップアップを表示する処理（Outlook非依存にできないCOM呼び出し）は
+#   -ShowPopup スクリプトブロックとして注入させる。これにより判定ロジック自体は
+#   Outlook無しでテストでき、ShowPopup側はテストでモックに差し替えられる。
 #
 #   戻り値: PSCustomObject @{ Action = <string>; Message = <string|$null>; Error = <string|$null> }
 #     Action: "Shown"（表示を試みた=ShowPopupを呼んだ) | "Failed"（ShowPopupが例外を投げた) |
@@ -636,10 +612,8 @@ function Show-SaveNotification {
 }
 
 # ------------------------------------------------------------
-# [レビュー反映・mail-watch対応] Format-TruncatedList
-#   一覧を先頭N件＋「他n件」に要約する汎用ヘルパー。元々
-#   Show-SaveNotification内にフォルダ名専用で書かれていたロジックを、
-#   件名一覧など他の用途にも使えるよう切り出した。
+# Format-TruncatedList
+#   一覧を先頭N件＋「他n件」に要約する汎用ヘルパー。
 #   $Items.Count が $Threshold 以下ならそのまま返す。超える場合は
 #   先頭 $ShowCount 件 + $OthersFormat（{0}に残数が入る）を1件追加して返す。
 # ------------------------------------------------------------
@@ -676,4 +650,199 @@ function Format-TruncatedList {
     $shown = @($list | Select-Object -First $ShowCount)
     $shown += ($OthersFormat -f ($list.Count - $ShowCount))
     return $shown
+}
+
+# ==============================================================
+# ここから下は mail-watch 固有の追加関数。
+# mail-attach-saver 側の MailAttachLib.ps1 には存在しない（差分があって正常）。
+# ==============================================================
+
+# ------------------------------------------------------------
+# Test-SenderMatch
+#   差出人メールアドレスが監視対象ドメインのいずれかに一致するかを判定する。
+#   - $SenderEmailAddress は既に解決済みの生SMTPアドレス文字列を渡すこと
+#     （Exchange DN形式("/O="始まり)の解決自体はCOM依存のため本体側の責務。
+#      解決できなかった場合は $null または未解決の生文字列を渡せばよく、
+#      いずれの場合もこの関数は「一致しない」を返す）
+#   - 小文字化したうえで、各ドメインについて "@"+ドメイン または "."+ドメイン
+#     で終わるか（後方一致）を見る。"."を使うことで "mail.example.co.jp" が
+#     "example.co.jp" 指定でもサブドメインとして一致する一方、
+#     "notexample.co.jp" のような紛らわしい別ドメインを誤って一致させない
+#     （区切り文字を挟んだ後方一致であることが安全性の要）。
+# ------------------------------------------------------------
+function Test-SenderMatch {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$SenderEmailAddress,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string[]]$AllowedDomains
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SenderEmailAddress)) { return $false }
+    if ($null -eq $AllowedDomains) { return $false }
+
+    $addr = $SenderEmailAddress.ToLowerInvariant()
+
+    foreach ($domain in $AllowedDomains) {
+        if ([string]::IsNullOrWhiteSpace($domain)) { continue }
+
+        $d = $domain.Trim().ToLowerInvariant().TrimStart('@')
+        if ([string]::IsNullOrEmpty($d)) { continue }
+
+        if ($addr.EndsWith("@" + $d, [System.StringComparison]::Ordinal) -or `
+            $addr.EndsWith("." + $d, [System.StringComparison]::Ordinal)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+# ------------------------------------------------------------
+# Get-EventFolderName
+#   受信メール1通ぶんの保存先フォルダ名を決定する。
+#   命名規則: "yyyy-MM-dd_HHmm_<サニタイズ済み件名先頭40字>"
+#   $ParentPath 配下に同名フォルダが既にあれば " (2)"..." (3)"... と連番を振る
+#   （実フォルダの有無を見るだけの読み取り専用。作成はしない＝Initialize-TargetFolderの役目）。
+# ------------------------------------------------------------
+function Get-EventFolderName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ParentPath,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$ReceivedTime,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Subject
+    )
+
+    $safeSubject = ConvertTo-SafeName -Name $Subject
+    if ($safeSubject.Length -gt 40) {
+        $safeSubject = $safeSubject.Substring(0, 40)
+    }
+    # 40字カット後に末尾がドット/空白になったり空になったりし得るため再度整える
+    $safeSubject = ConvertTo-SafeName -Name $safeSubject
+
+    $baseName = "{0}_{1}" -f $ReceivedTime.ToString("yyyy-MM-dd_HHmm"), $safeSubject
+
+    $candidateName = $baseName
+    $n = 2
+    while (Test-Path -LiteralPath (Join-Path $ParentPath $candidateName)) {
+        $candidateName = "{0} ({1})" -f $baseName, $n
+        $n++
+    }
+
+    return $candidateName
+}
+
+# ------------------------------------------------------------
+# New-MailEventLine
+#   着信記録(JSONL)の1行分を組み立てる。ConvertTo-Json -Compress は既定で
+#   非ASCII文字を \uXXXX にエスケープするため、Claude・人間どちらが直接
+#   ファイルを開いても読みやすいよう日本語部分は実際のUTF-8文字へ戻して返す
+#   （\uXXXX のままでもJSONとしては正しく壊れないが、可読性のための後処理）。
+#   戻り値: JSONL用の1行分の文字列（末尾に改行は含まない）
+# ------------------------------------------------------------
+function New-MailEventLine {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [datetime]$ReceivedTime,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$FromDomain,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$FromName,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Subject,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Folder,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string[]]$Files,
+
+        [Parameter(Mandatory = $true)]
+        [int]$SavedCount,
+
+        [Parameter(Mandatory = $false)]
+        [datetime]$Timestamp = (Get-Date)
+    )
+
+    if ($null -eq $FromName) { $FromName = "" }
+    if ($null -eq $Files) { $Files = @() }
+
+    $record = [ordered]@{
+        receivedTime = $ReceivedTime.ToString("o")
+        fromDomain   = $FromDomain
+        fromName     = $FromName
+        subject      = $Subject
+        folder       = $Folder
+        files        = @($Files)
+        savedCount   = $SavedCount
+        ts           = $Timestamp.ToString("o")
+    }
+
+    $json = $record | ConvertTo-Json -Compress
+
+    # \uXXXX エスケープを実文字へ戻す（JSONとしての正しさには影響しない可読性のための処理）
+    $json = [regex]::Replace($json, '\\u([0-9a-fA-F]{4})', {
+        param($m)
+        [string][char]([Convert]::ToInt32($m.Groups[1].Value, 16))
+    })
+
+    return $json
+}
+
+# ------------------------------------------------------------
+# Add-MailEventRecord
+#   New-MailEventLine が組み立てたJSON行を $Path（着信記録JSONL）へ追記する
+#   （イベント記録追記の書き込み系統）。
+#   仕様により本ファイルはBOM無しUTF-8で書く（.ps1のBOM付き要件とは別）。
+#   .NET の UTF8Encoding($false) は「BOMを出さない」設定であり、新規作成時も
+#   追記時もBOMを一切書き出さないことを利用する。
+#   -DryRun 指定時は追記せず、Recorded=$false を返すだけにする。
+#   戻り値: PSCustomObject @{ Recorded = <bool> }
+# ------------------------------------------------------------
+function Add-MailEventRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$JsonLine,
+
+        [switch]$DryRun
+    )
+
+    if ($DryRun) {
+        return [PSCustomObject]@{ Recorded = $false }
+    }
+
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+
+    $noBomUtf8 = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::AppendAllText($Path, $JsonLine + "`r`n", $noBomUtf8)
+
+    return [PSCustomObject]@{ Recorded = $true }
 }
